@@ -5,7 +5,7 @@ Uses workflow_ltx2_enhanced.json as base template.
 
 Based on test_720p.py production configuration:
 - Resolution: 1280x736
-- img_compression: 30
+- img_compression: 15
 - fps: 30
 - steps: 8
 - cfg: 1.0
@@ -24,9 +24,9 @@ class WorkflowBuilder:
         with open(template_path, 'r') as f:
             self.template = json.load(f)
 
-        # Ensure img_compression is 30 (production quality from test_720p.py)
+        # Ensure img_compression is 15 (high quality for better first frame preservation)
         if "269" in self.template:
-            self.template["269"]["inputs"]["img_compression"] = 30
+            self.template["269"]["inputs"]["img_compression"] = 15
 
     def build_workflow(
         self,

@@ -91,7 +91,7 @@
   "269": {
     "inputs": {
       "image": ["241", 0],
-      "img_compression": 30
+      "img_compression": 15
     },
     "class_type": "LTXVPreprocess",
     "_meta": {"title": "Preprocess"}
