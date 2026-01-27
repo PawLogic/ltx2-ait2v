@@ -4,12 +4,17 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-LTX-2 Audio-to-Video RunPod Serverless API - generates lip-synced video from image + audio using the LTX-2 19B model.
+LTX-2 Video Generation RunPod Serverless API with two modes:
+- **Mode 1 (Lip-sync)**: Image + Audio → Video with lip synchronization
+- **Mode 2 (Audio Gen)**: Image + Duration → Video + Generated audio
+
+Uses LTX-2 19B model with LoRA optimizations.
 
 ## Architecture
 
 ```
-User Request (image_url, audio_url, prompt)
+Mode 1: User Request (image_url, audio_url, prompt)
+Mode 2: User Request (image_url, duration, prompt)
     ↓
 RunPod Serverless API (endpoint: 42qdgmzjc9ldy5)
     ↓
@@ -29,18 +34,19 @@ Return video_url
 LTX/
 ├── CLAUDE.md
 ├── docker/
-│   ├── Dockerfile                   # Worker container (v33)
-│   ├── workflow_ltx2_enhanced.json  # ComfyUI workflow template
-│   ├── API.md                       # API documentation
+│   ├── Dockerfile                    # Worker container (v34)
+│   ├── workflow_ltx2_enhanced.json   # Mode 1: Lip-sync workflow
+│   ├── workflow_ltx2_audio_gen.json  # Mode 2: Audio generation workflow
+│   ├── API.md                        # API documentation
 │   └── pod_files/
-│       ├── rp_handler.py            # RunPod handler
-│       ├── url_downloader.py        # URL downloader
-│       ├── workflow_builder.py      # Workflow builder
-│       ├── gcs_uploader.py          # GCS upload
-│       ├── start_wrapper.sh         # Startup script
-│       └── gcs-credentials.json     # GCS credentials
-├── scripts/                         # Utility scripts
-└── test/                            # Test files
+│       ├── rp_handler.py             # RunPod handler (unified routing)
+│       ├── url_downloader.py         # URL downloader
+│       ├── workflow_builder.py       # Workflow builder (both modes)
+│       ├── gcs_uploader.py           # GCS upload
+│       ├── start_wrapper.sh          # Startup script
+│       └── gcs-credentials.json      # GCS credentials
+├── scripts/                          # Utility scripts
+└── test/                             # Test files
 ```
 
 ## Key Commands
@@ -48,14 +54,20 @@ LTX/
 ```bash
 # Build & Push
 cd docker
-docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v33 .
-docker push nooka210/ltx2-comfyui-worker:v33
+docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v34 .
+docker push nooka210/ltx2-comfyui-worker:v34
 
-# Test API
+# Test Mode 1: Lip-sync
 curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"input":{"image_url":"...","audio_url":"...","quality_preset":"fast"}}'
+
+# Test Mode 2: Audio Generation
+curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input":{"image_url":"...","duration":5.0,"quality_preset":"fast"}}'
 ```
 
 ## API
@@ -94,6 +106,20 @@ See `docker/API.md` for full documentation.
 |------|------|--------|------|
 | img_compression | 首帧压缩 | 23 | 0-50，越低质量越好 |
 | img_strength | 首帧注入 | 1.0 | 0-1，越低动画越自由 |
+
+## 帧率配置
+
+| 模态 | 帧率 | 计算公式 |
+|------|------|---------|
+| 视频 | 30 fps | `ceil(duration * 30) + 1` |
+| 音频 | 25 Hz | `ceil(duration * 25)` |
+
+## API 模式
+
+| 模式 | 输入 | 输出 |
+|------|------|------|
+| Mode 1 (Lip-sync) | image_url + audio_url | 视频 (lip-sync to audio) |
+| Mode 2 (Audio Gen) | image_url + duration | 视频 + 生成音频 |
 
 ## Notes
 

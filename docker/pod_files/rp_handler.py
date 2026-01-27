@@ -57,6 +57,10 @@ QUALITY_PRESETS = {
 DEFAULT_POSITIVE_PROMPT = "A person speaks naturally with perfect lip synchronization, high quality, detailed facial expressions"
 DEFAULT_NEGATIVE_PROMPT = "static, bad teeth, blurry, low quality, pixelated, compressed artifacts"
 
+# Default prompts for audio generation mode (no input audio)
+DEFAULT_AUDIO_GEN_POSITIVE_PROMPT = "A person speaking naturally, high quality, detailed facial expressions, natural movements"
+DEFAULT_AUDIO_GEN_NEGATIVE_PROMPT = "static, blurry, low quality, pixelated, compressed artifacts"
+
 # Initialize workflow builder (will be done after ComfyUI is ready)
 workflow_builder = None
 
@@ -209,9 +213,10 @@ def handler(event):
         # Initialize workflow builder if needed
         if workflow_builder is None:
             template_path = "/comfyui/workflows/ltx2_enhanced.json"
+            audio_gen_template_path = "/comfyui/workflows/ltx2_audio_gen.json"
             if not os.path.exists(template_path):
                 return {"status": "error", "error": f"Workflow template not found: {template_path}"}
-            workflow_builder = WorkflowBuilder(template_path)
+            workflow_builder = WorkflowBuilder(template_path, audio_gen_template_path)
             print(f"Workflow builder initialized from {template_path}")
 
         input_data = event.get("input", {})
@@ -416,6 +421,273 @@ def handler(event):
         }
 
 
+def audio_gen_handler(event):
+    """
+    Handler for Image-to-Video+Audio generation (no input audio).
+
+    Generates both video and audio from just an image and duration parameter.
+
+    Input format:
+    {
+        "input": {
+            "image_url": "https://example.com/image.jpg",
+            "duration": 5.0,  // Video/audio duration in seconds (1-30)
+            "prompt_positive": "A person speaking...",  // optional
+            "prompt_negative": "blurry, low quality...",  // optional
+            "seed": 12345,           // optional, random if not provided
+            "width": 1280,           // optional, default 1280
+            "height": 736,           // optional, default 736
+            "quality_preset": "high" // optional: fast, high, ultra
+        }
+    }
+
+    Output format:
+    {
+        "status": "success",
+        "output": {
+            "video_url": "...",
+            "gcs_url": "...",
+            "video_filename": "...",
+            "resolution": "1280x736",
+            "duration": "5.0s",
+            "frames": 151,
+            "audio_frames": 125,
+            "fps": 30,
+            "mode": "audio_gen",
+            "generation_time": 45.3
+        }
+    }
+    """
+    global workflow_builder
+
+    start_time = time.time()
+
+    try:
+        # Wait for ComfyUI
+        if not wait_for_comfyui(timeout=120):
+            return {"status": "error", "error": "ComfyUI failed to start"}
+
+        # Initialize workflow builder if needed
+        if workflow_builder is None:
+            template_path = "/comfyui/workflows/ltx2_enhanced.json"
+            audio_gen_template_path = "/comfyui/workflows/ltx2_audio_gen.json"
+            if not os.path.exists(template_path):
+                return {"status": "error", "error": f"Workflow template not found: {template_path}"}
+            workflow_builder = WorkflowBuilder(template_path, audio_gen_template_path)
+            print(f"Workflow builder initialized with audio_gen template")
+
+        # Check if audio_gen template is available
+        if workflow_builder.audio_gen_template is None:
+            return {"status": "error", "error": "Audio generation template not loaded"}
+
+        input_data = event.get("input", {})
+
+        # Validate required inputs
+        image_url = input_data.get("image_url")
+        duration = input_data.get("duration")
+
+        if not image_url:
+            return {"status": "error", "error": "Missing required field: image_url"}
+        if duration is None:
+            return {"status": "error", "error": "Missing required field: duration"}
+
+        # Validate duration range
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            return {"status": "error", "error": f"Invalid duration value: {duration}"}
+
+        if duration < 1.0:
+            return {"status": "error", "error": "Duration must be at least 1 second"}
+        if duration > 30.0:
+            return {"status": "error", "error": "Duration cannot exceed 30 seconds"}
+
+        # Validate URL
+        if not URLDownloader.validate_url(image_url):
+            return {"status": "error", "error": f"Invalid image_url: {image_url}"}
+
+        # Download image
+        print("Step 1/4: Downloading image...")
+        try:
+            image_bytes, image_filename = URLDownloader.download_image(image_url)
+        except Exception as e:
+            return {"status": "error", "error": f"Failed to download image: {e}"}
+
+        # Upload image to ComfyUI
+        print("Step 2/4: Uploading to ComfyUI...")
+        try:
+            image_name = upload_file_to_comfyui(image_bytes, image_filename)
+        except Exception as e:
+            return {"status": "error", "error": f"Failed to upload image: {e}"}
+
+        # Get configuration
+        width = input_data.get("width", 1280)
+        height = input_data.get("height", 736)
+        seed = input_data.get("seed", int(time.time() * 1000) % (2**48))
+        prompt_positive = input_data.get("prompt_positive", DEFAULT_AUDIO_GEN_POSITIVE_PROMPT)
+        prompt_negative = input_data.get("prompt_negative", DEFAULT_AUDIO_GEN_NEGATIVE_PROMPT)
+
+        # Get quality preset
+        quality_preset = input_data.get("quality_preset", "high")
+        if quality_preset not in QUALITY_PRESETS:
+            quality_preset = "high"
+        preset = QUALITY_PRESETS[quality_preset]
+
+        # Allow direct LoRA strength override (0 = disabled)
+        lora_camera = input_data.get("lora_camera", preset["lora_camera"])
+        lora_distilled = input_data.get("lora_distilled", preset["lora_distilled"])
+        lora_detailer = input_data.get("lora_detailer", preset["lora_detailer"])
+
+        # Image preprocessing parameters
+        img_compression = input_data.get("img_compression", 23)
+        img_strength = input_data.get("img_strength", 1.0)
+
+        # Build workflow using audio generation template
+        print("Step 3/4: Building audio generation workflow...")
+        workflow = workflow_builder.build_audio_gen_workflow(
+            image_name=image_name,
+            duration=duration,
+            prompt_positive=prompt_positive,
+            prompt_negative=prompt_negative,
+            seed=seed,
+            width=width,
+            height=height,
+            fps=30,
+            steps=preset["steps"],
+            cfg_scale=1.0,
+            lora_distilled=lora_distilled,
+            lora_detailer=lora_detailer,
+            lora_camera=lora_camera,
+            img_compression=img_compression,
+            img_strength=img_strength,
+        )
+
+        # Get video/audio parameters for response
+        gen_params = workflow_builder.get_audio_gen_params(duration, fps=30)
+
+        print(f"  Resolution: {width}x{height}")
+        print(f"  Duration: {duration}s")
+        print(f"  Video frames: {gen_params['num_frames']} @ 30fps")
+        print(f"  Audio frames: {gen_params['audio_frames']} @ 25Hz")
+        print(f"  Quality: {quality_preset} ({preset['description']})")
+        print(f"  Seed: {seed}")
+
+        # Submit to ComfyUI
+        print("Step 4/4: Generating video + audio...")
+        payload = {
+            "prompt": workflow,
+            "client_id": f"runpod_audiogen_{int(time.time())}"
+        }
+
+        response = requests.post(f"{COMFYUI_URL}/prompt", json=payload, timeout=30)
+        if response.status_code != 200:
+            return {"status": "error", "error": f"ComfyUI rejected workflow: {response.text}"}
+
+        result = response.json()
+        if "error" in result:
+            return {"status": "error", "error": f"ComfyUI error: {result['error']}"}
+
+        prompt_id = result.get("prompt_id")
+        if not prompt_id:
+            return {"status": "error", "error": "No prompt_id returned from ComfyUI"}
+
+        # Wait for completion
+        try:
+            video_info = wait_for_completion(prompt_id, timeout=600)
+        except TimeoutError as e:
+            return {"status": "error", "error": str(e)}
+        except RuntimeError as e:
+            return {"status": "error", "error": str(e)}
+
+        # Read and encode video
+        video_filename = video_info.get("filename", "output.mp4")
+        video_subfolder = video_info.get("subfolder", "")
+
+        if video_subfolder:
+            video_path = f"/workspace/ComfyUI/output/{video_subfolder}/{video_filename}"
+        else:
+            video_path = f"/workspace/ComfyUI/output/{video_filename}"
+
+        # Also check comfyui output directory
+        if not os.path.exists(video_path):
+            video_path = f"/comfyui/output/{video_filename}"
+
+        if not os.path.exists(video_path):
+            return {"status": "error", "error": f"Video file not found: {video_filename}"}
+
+        generation_time = time.time() - start_time
+
+        # Get job_id from RunPod event for GCS path organization
+        job_id = event.get("id", None)
+
+        # Upload to GCS
+        print("Step 5/5: Uploading to GCS...")
+        gcs_result = upload_video_to_gcs(
+            video_path=video_path,
+            job_id=job_id,
+            subfolder="ltx2_videos"
+        )
+
+        if not gcs_result["success"]:
+            # Fallback to base64 if GCS upload fails
+            print(f"Warning: GCS upload failed: {gcs_result['error']}")
+            print("Falling back to base64 encoding...")
+            with open(video_path, "rb") as f:
+                video_base64 = base64.b64encode(f.read()).decode()
+
+            return {
+                "status": "success",
+                "output": {
+                    "video_base64": video_base64,
+                    "video_url": None,
+                    "gcs_url": None,
+                    "video_filename": video_filename,
+                    "prompt_id": prompt_id,
+                    "resolution": f"{width}x{height}",
+                    "duration": f"{duration:.1f}s",
+                    "frames": gen_params["num_frames"],
+                    "audio_frames": gen_params["audio_frames"],
+                    "fps": 30,
+                    "seed": seed,
+                    "quality_preset": quality_preset,
+                    "mode": "audio_gen",
+                    "generation_time": round(generation_time, 1),
+                    "gcs_error": gcs_result["error"]
+                }
+            }
+
+        # Clean up local file after successful upload
+        delete_local_video(video_path)
+
+        return {
+            "status": "success",
+            "output": {
+                "video_url": gcs_result["public_url"],
+                "gcs_url": gcs_result["gcs_url"],
+                "video_filename": gcs_result["filename"],
+                "video_size_bytes": gcs_result["size_bytes"],
+                "prompt_id": prompt_id,
+                "resolution": f"{width}x{height}",
+                "duration": f"{duration:.1f}s",
+                "frames": gen_params["num_frames"],
+                "audio_frames": gen_params["audio_frames"],
+                "fps": 30,
+                "seed": seed,
+                "quality_preset": quality_preset,
+                "mode": "audio_gen",
+                "generation_time": round(generation_time, 1)
+            }
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 # Legacy handler for backward compatibility (accepts pre-built workflow)
 def legacy_handler(event):
     """
@@ -480,28 +752,42 @@ def unified_handler(event):
     """
     Unified handler that routes to appropriate handler based on input.
 
-    - If input contains image_url/audio_url: Use new URL-based handler
-    - If input contains workflow: Use legacy handler
+    Mode 1: Audio-to-Video (lip-sync)
+    - Input: image_url + audio_url
+    - Output: Video with lip-sync to provided audio
+
+    Mode 2: Image-to-Video+Audio (generation)
+    - Input: image_url + duration (no audio_url)
+    - Output: Video + generated audio
+
+    Legacy: Pre-built workflow
+    - Input: workflow object
+    - Output: Workflow execution result
     """
     input_data = event.get("input", {})
 
-    # Check for URL-based input
-    if input_data.get("image_url") or input_data.get("audio_url"):
+    # Mode 1: Audio-to-Video (lip-sync) - image + audio
+    if input_data.get("image_url") and input_data.get("audio_url"):
         return handler(event)
 
-    # Check for legacy workflow input
+    # Mode 2: Image-to-Video+Audio (generation) - image + duration, no audio
+    if input_data.get("image_url") and input_data.get("duration") and not input_data.get("audio_url"):
+        return audio_gen_handler(event)
+
+    # Legacy mode: pre-built workflow
     if input_data.get("workflow"):
         return legacy_handler(event)
 
     return {
         "status": "error",
-        "error": "Invalid input. Provide either (image_url + audio_url) or (workflow)."
+        "error": "Invalid input. Provide either (image_url + audio_url) for lip-sync, (image_url + duration) for audio generation, or (workflow) for legacy mode."
     }
 
 
 if __name__ == "__main__":
     print("Starting Enhanced LTX-2 RunPod Handler")
     print("Supported input modes:")
-    print("  - URL mode: image_url + audio_url")
+    print("  - Mode 1 (Lip-sync): image_url + audio_url")
+    print("  - Mode 2 (Audio Gen): image_url + duration")
     print("  - Legacy mode: workflow + images")
     runpod.serverless.start({"handler": unified_handler})

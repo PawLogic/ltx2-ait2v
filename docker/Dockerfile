@@ -61,6 +61,9 @@ RUN mkdir -p /workspace/handler
 # img_compression fixed to 30 for production quality (test_720p.py standard)
 COPY workflow_ltx2_enhanced.json /comfyui/workflows/ltx2_enhanced.json
 
+# Copy audio generation workflow template (Mode 2: image + duration -> video + generated audio)
+COPY workflow_ltx2_audio_gen.json /comfyui/workflows/ltx2_audio_gen.json
+
 # Copy handler files (v28: added gcs_uploader.py for GCS upload)
 COPY pod_files/rp_handler.py /workspace/handler/rp_handler.py
 COPY pod_files/url_downloader.py /workspace/handler/url_downloader.py
