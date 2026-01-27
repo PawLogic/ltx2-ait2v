@@ -1,0 +1,37 @@
+# Credentials - DO NOT COMMIT
+**/gcs-credentials.json
+**/service-account*.json
+**/*.pem
+**/*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.env
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test outputs
+*.mp4
+*.mp3
+*.wav
+test/*.json
+!test/LTX-2*.json
+
+# Temp files
+*.tmp
+*.log
+*.tar.gz
