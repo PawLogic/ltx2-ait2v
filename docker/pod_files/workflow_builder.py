@@ -5,7 +5,7 @@ Uses workflow_ltx2_enhanced.json as base template.
 
 Based on test_720p.py production configuration:
 - Resolution: 1280x736
-- img_compression: 15
+- img_compression: 23
 - fps: 30
 - steps: 8
 - cfg: 1.0
@@ -20,13 +20,9 @@ class WorkflowBuilder:
     """Build workflow from enhanced template with parameter injection."""
 
     def __init__(self, template_path: str = "/comfyui/workflows/ltx2_enhanced.json"):
-        """Load enhanced workflow template and apply fixes."""
+        """Load enhanced workflow template."""
         with open(template_path, 'r') as f:
             self.template = json.load(f)
-
-        # Ensure img_compression is 15 (high quality for better first frame preservation)
-        if "269" in self.template:
-            self.template["269"]["inputs"]["img_compression"] = 15
 
     def build_workflow(
         self,
@@ -44,6 +40,8 @@ class WorkflowBuilder:
         lora_distilled: float = 0.6,
         lora_detailer: float = 1.0,
         lora_camera: float = 0.3,
+        img_compression: int = 23,
+        img_strength: float = 1.0,
     ) -> dict:
         """
         Inject parameters into workflow template.
@@ -63,6 +61,8 @@ class WorkflowBuilder:
             lora_distilled: Distilled LoRA strength (default 0.6)
             lora_detailer: Detailer LoRA strength (default 1.0)
             lora_camera: Camera LoRA strength (default 0.3)
+            img_compression: Image compression level (default 23, lower = better quality)
+            img_strength: First frame injection strength (default 0.9)
 
         Returns:
             Complete workflow ready for ComfyUI execution
@@ -97,6 +97,8 @@ class WorkflowBuilder:
             "LORA_DISTILLED_STRENGTH": lora_distilled,
             "LORA_DETAILER_STRENGTH": lora_detailer,
             "LORA_CAMERA_STRENGTH": lora_camera,
+            "IMG_COMPRESSION": img_compression,
+            "IMG_STRENGTH": img_strength,
         }
 
         # Deep copy template and inject parameters

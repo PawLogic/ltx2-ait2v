@@ -61,6 +61,8 @@ GET /status/{id}   # Check status
 | `lora_camera` | float | No | 0.3 | Camera LoRA (0 = disable dolly-in) |
 | `lora_distilled` | float | No | 0.6 | Distilled LoRA strength |
 | `lora_detailer` | float | No | 1.0 | Detailer LoRA strength |
+| `img_compression` | int | No | 23 | Image compression (0-50, lower = better) |
+| `img_strength` | float | No | 1.0 | First frame injection strength (0-1) |
 
 ### Quality Presets
 
@@ -77,6 +79,13 @@ GET /status/{id}   # Check status
 | `lora_camera` | Dolly-in camera effect | 0-1.0 | Set 0 to disable |
 | `lora_distilled` | Inference acceleration | 0.4-0.8 | Lower = faster |
 | `lora_detailer` | Detail enhancement | 0.5-1.0 | Higher = more detail |
+
+### Image Parameters
+
+| Parameter | Description | Range | Notes |
+|-----------|-------------|-------|-------|
+| `img_compression` | First frame compression | 0-50 | Lower = better quality, may cause initial freeze |
+| `img_strength` | First frame injection | 0-1.0 | Lower = more animation freedom |
 
 ### Notes
 

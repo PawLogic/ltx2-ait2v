@@ -29,7 +29,7 @@ Return video_url
 LTX/
 ├── CLAUDE.md
 ├── docker/
-│   ├── Dockerfile                   # Worker container (v28)
+│   ├── Dockerfile                   # Worker container (v33)
 │   ├── workflow_ltx2_enhanced.json  # ComfyUI workflow template
 │   ├── API.md                       # API documentation
 │   └── pod_files/
@@ -48,8 +48,8 @@ LTX/
 ```bash
 # Build & Push
 cd docker
-docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v28 .
-docker push nooka210/ltx2-comfyui-worker:v28
+docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v33 .
+docker push nooka210/ltx2-comfyui-worker:v33
 
 # Test API
 curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
@@ -87,6 +87,13 @@ See `docker/API.md` for full documentation.
 | Distilled | 加速推理 | 0.6 |
 | Detailer | 增强细节 | 1.0 |
 | Camera (dolly-in) | 推镜头效果 | 0.3 |
+
+## 图像参数
+
+| 参数 | 作用 | 默认值 | 说明 |
+|------|------|--------|------|
+| img_compression | 首帧压缩 | 23 | 0-50，越低质量越好 |
+| img_strength | 首帧注入 | 1.0 | 0-1，越低动画越自由 |
 
 ## Notes
 

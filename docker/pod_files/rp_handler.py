@@ -271,6 +271,10 @@ def handler(event):
         lora_distilled = input_data.get("lora_distilled", preset["lora_distilled"])
         lora_detailer = input_data.get("lora_detailer", preset["lora_detailer"])
 
+        # Image preprocessing parameters
+        img_compression = input_data.get("img_compression", 23)  # Lower = better quality
+        img_strength = input_data.get("img_strength", 1.0)  # First frame injection strength
+
         # Build workflow using template
         print("Step 3/4: Building workflow...")
         workflow = workflow_builder.build_workflow(
@@ -288,6 +292,8 @@ def handler(event):
             lora_distilled=lora_distilled,
             lora_detailer=lora_detailer,
             lora_camera=lora_camera,
+            img_compression=img_compression,
+            img_strength=img_strength,
         )
 
         # Get video parameters for response
