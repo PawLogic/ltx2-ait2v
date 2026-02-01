@@ -1,7 +1,6 @@
 # LTX-2 Audio-to-Video ComfyUI Worker for RunPod Serverless
-# v28: Upload video to GCS instead of returning base64
-#      Returns public URL for smaller response size
-FROM runpod/worker-comfyui:5.7.1-base
+# v40: Added POD_MODE support for Pod-based testing
+FROM runpod/worker-comfyui:5.7.1-base-cuda12.8.1
 
 WORKDIR /comfyui
 
@@ -64,6 +63,9 @@ COPY workflow_ltx2_enhanced.json /comfyui/workflows/ltx2_enhanced.json
 # Copy audio generation workflow template (Mode 2: image + duration -> video + generated audio)
 COPY workflow_ltx2_audio_gen.json /comfyui/workflows/ltx2_audio_gen.json
 
+# Copy multiframe workflow template (Mode 3: multi-keyframe + audio)
+COPY workflow_ltx2_multiframe.json /comfyui/workflows/ltx2_multiframe.json
+
 # Copy handler files (v28: added gcs_uploader.py for GCS upload)
 COPY pod_files/rp_handler.py /workspace/handler/rp_handler.py
 COPY pod_files/url_downloader.py /workspace/handler/url_downloader.py
@@ -89,6 +91,8 @@ RUN chmod +x /start.sh
 RUN echo "=== Verifying handler files ===" && \
     ls -la /workspace/handler/ && \
     ls -la /comfyui/workflows/ && \
+    echo "=== Workflow templates ===" && \
+    ls -la /comfyui/workflows/ltx2_*.json && \
     ls -la /workspace/gcs-credentials.json
 
 # Default command uses the base image's entrypoint which calls /start.sh

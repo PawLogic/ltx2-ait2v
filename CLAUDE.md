@@ -4,9 +4,11 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-LTX-2 Video Generation RunPod Serverless API with two modes:
+LTX-2 Video Generation RunPod Serverless API with four modes:
 - **Mode 1 (Lip-sync)**: Image + Audio → Video with lip synchronization
 - **Mode 2 (Audio Gen)**: Image + Duration → Video + Generated audio
+- **Mode 3a (Multi-keyframe Lip-sync)**: Keyframes[] + Audio → Video with keyframe guides
+- **Mode 3b (Multi-keyframe Audio Gen)**: Keyframes[] + Duration → Video + Generated audio
 
 Uses LTX-2 19B model with LoRA optimizations.
 
@@ -15,13 +17,16 @@ Uses LTX-2 19B model with LoRA optimizations.
 ```
 Mode 1: User Request (image_url, audio_url, prompt)
 Mode 2: User Request (image_url, duration, prompt)
+Mode 3a: User Request (keyframes[], audio_url, prompt)
+Mode 3b: User Request (keyframes[], duration, prompt)
     ↓
 RunPod Serverless API (endpoint: 42qdgmzjc9ldy5)
     ↓
 GPU Workers (RTX 4090/5090, 24GB+ VRAM)
     ├─ ComfyUI Framework
     ├─ LTX-2 19B Model (FP8)
-    └─ LoRA Models (distilled, detailer, camera)
+    ├─ LoRA Models (distilled, detailer, camera)
+    └─ KJNodes (LTXVAddGuideMulti for Mode 3)
     ↓
 GCS Upload (dramaland-public bucket)
     ↓
@@ -34,9 +39,10 @@ Return video_url
 LTX/
 ├── CLAUDE.md
 ├── docker/
-│   ├── Dockerfile                    # Worker container (v34)
+│   ├── Dockerfile                    # Worker container (v51)
 │   ├── workflow_ltx2_enhanced.json   # Mode 1: Lip-sync workflow
 │   ├── workflow_ltx2_audio_gen.json  # Mode 2: Audio generation workflow
+│   ├── workflow_ltx2_multiframe.json # Mode 3: Multi-keyframe workflow
 │   ├── API.md                        # API documentation
 │   └── pod_files/
 │       ├── rp_handler.py             # RunPod handler (unified routing)
@@ -54,8 +60,8 @@ LTX/
 ```bash
 # Build & Push
 cd docker
-docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v34 .
-docker push nooka210/ltx2-comfyui-worker:v34
+docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v51 .
+docker push nooka210/ltx2-comfyui-worker:v51
 
 # Test Mode 1: Lip-sync
 curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
@@ -120,6 +126,19 @@ See `docker/API.md` for full documentation.
 |------|------|------|
 | Mode 1 (Lip-sync) | image_url + audio_url | 视频 (lip-sync to audio) |
 | Mode 2 (Audio Gen) | image_url + duration | 视频 + 生成音频 |
+| Mode 3a (Multi-keyframe Lip-sync) | keyframes[] + audio_url | 多关键帧引导视频 + lip-sync |
+| Mode 3b (Multi-keyframe Audio Gen) | keyframes[] + duration | 多关键帧引导视频 + 生成音频 |
+
+## Mode 3 关键帧参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| keyframes | array | 必填 | 1-9 个关键帧对象 |
+| keyframes[].image_url | string | 必填 | 关键帧图片 URL |
+| keyframes[].frame_position | string/float | auto | "first", "last", 或 0.0-1.0 |
+| keyframes[].strength | float | 1.0/0.8 | 引导强度 0.0-1.0 |
+
+**注意**: Mode 3 使用 KJNodes 的 `LTXVAddGuideMulti` 节点，已内置于 Docker 镜像
 
 ## Notes
 

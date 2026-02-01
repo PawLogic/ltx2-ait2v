@@ -1,0 +1,141 @@
+{
+  "184": {
+    "inputs": {
+      "ckpt_name": "ltx-2-19b-dev-fp8.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {"title": "Load Checkpoint"}
+  },
+  "288": {
+    "inputs": {
+      "lora_name": "ltx-2-19b-distilled-lora-384.safetensors",
+      "strength_model": "LORA_DISTILLED_STRENGTH",
+      "model": ["184", 0]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {"title": "LoRA Distilled"}
+  },
+  "290": {
+    "inputs": {
+      "lora_name": "ltx-2-19b-ic-lora-detailer.safetensors",
+      "strength_model": "LORA_DETAILER_STRENGTH",
+      "model": ["288", 0]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {"title": "LoRA Detailer"}
+  },
+  "289": {
+    "inputs": {
+      "lora_name": "ltx-2-19b-lora-camera-control-dolly-in.safetensors",
+      "strength_model": "LORA_CAMERA_STRENGTH",
+      "model": ["290", 0]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {"title": "LoRA Camera"}
+  },
+  "155": {
+    "inputs": {
+      "text_encoder": "gemma_3_12B_it_fp8_scaled.safetensors",
+      "ckpt_name": "ltx-2-19b-dev-fp8.safetensors",
+      "device": "default"
+    },
+    "class_type": "LTXAVTextEncoderLoader",
+    "_meta": {"title": "Text Encoder"}
+  },
+  "171": {
+    "inputs": {
+      "ckpt_name": "ltx-2-19b-dev-fp8.safetensors"
+    },
+    "class_type": "LTXVAudioVAELoader",
+    "_meta": {"title": "Audio VAE"}
+  },
+  "162": {
+    "inputs": {
+      "width": "WIDTH",
+      "height": "HEIGHT",
+      "length": "NUM_FRAMES",
+      "batch_size": 1
+    },
+    "class_type": "EmptyLTXVLatentVideo",
+    "_meta": {"title": "Empty Latent"}
+  },
+  "169": {
+    "inputs": {
+      "text": "PROMPT_POSITIVE",
+      "clip": ["155", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Positive Prompt"}
+  },
+  "165": {
+    "inputs": {
+      "text": "PROMPT_NEGATIVE",
+      "clip": ["155", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Negative Prompt"}
+  },
+  "164": {
+    "inputs": {
+      "frame_rate": "FPS",
+      "positive": ["169", 0],
+      "negative": ["165", 0]
+    },
+    "class_type": "LTXVConditioning",
+    "_meta": {"title": "Conditioning"}
+  },
+  "178": {
+    "inputs": {
+      "noise_seed": "SEED",
+      "randomize": "disable"
+    },
+    "class_type": "RandomNoise",
+    "_meta": {"title": "Random Noise"}
+  },
+  "154": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {"title": "Sampler"}
+  },
+  "238": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": "STEPS",
+      "denoise": 1.0,
+      "model": ["289", 0]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {"title": "Scheduler"}
+  },
+  "153": {
+    "inputs": {
+      "cfg": "CFG_SCALE",
+      "model": ["289", 0],
+      "positive": ["164", 0],
+      "negative": ["164", 1]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {"title": "CFG Guider"}
+  },
+  "245": {
+    "inputs": {
+      "av_latent": ["161", 0]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {"title": "Separate AV"}
+  },
+  "234": {
+    "inputs": {
+      "tile_size": 640,
+      "overlap": 80,
+      "temporal_size": 4096,
+      "temporal_overlap": 8,
+      "samples": ["245", 0],
+      "vae": ["184", 2]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {"title": "VAE Decode"}
+  }
+}

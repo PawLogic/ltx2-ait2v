@@ -112,7 +112,7 @@ def upload_file_to_comfyui(file_bytes: bytes, filename: str, subfolder: str = ""
     return uploaded_name
 
 
-def wait_for_completion(prompt_id: str, timeout: int = 600) -> dict:
+def wait_for_completion(prompt_id: str, timeout: int = 1080) -> dict:
     """
     Wait for ComfyUI workflow to complete.
 
@@ -165,7 +165,7 @@ def wait_for_completion(prompt_id: str, timeout: int = 600) -> dict:
 
         time.sleep(5)
 
-    raise TimeoutError(f"Generation timeout after {timeout}s")
+    raise TimeoutError(f"Generation timeout after {timeout}s (18 min limit)")
 
 
 def handler(event):
@@ -214,9 +214,10 @@ def handler(event):
         if workflow_builder is None:
             template_path = "/comfyui/workflows/ltx2_enhanced.json"
             audio_gen_template_path = "/comfyui/workflows/ltx2_audio_gen.json"
+            multiframe_template_path = "/comfyui/workflows/ltx2_multiframe.json"
             if not os.path.exists(template_path):
                 return {"status": "error", "error": f"Workflow template not found: {template_path}"}
-            workflow_builder = WorkflowBuilder(template_path, audio_gen_template_path)
+            workflow_builder = WorkflowBuilder(template_path, audio_gen_template_path, multiframe_template_path)
             print(f"Workflow builder initialized from {template_path}")
 
         input_data = event.get("input", {})
@@ -330,7 +331,7 @@ def handler(event):
 
         # Wait for completion
         try:
-            video_info = wait_for_completion(prompt_id, timeout=600)
+            video_info = wait_for_completion(prompt_id, timeout=1080)
         except TimeoutError as e:
             return {"status": "error", "error": str(e)}
         except RuntimeError as e:
@@ -471,9 +472,10 @@ def audio_gen_handler(event):
         if workflow_builder is None:
             template_path = "/comfyui/workflows/ltx2_enhanced.json"
             audio_gen_template_path = "/comfyui/workflows/ltx2_audio_gen.json"
+            multiframe_template_path = "/comfyui/workflows/ltx2_multiframe.json"
             if not os.path.exists(template_path):
                 return {"status": "error", "error": f"Workflow template not found: {template_path}"}
-            workflow_builder = WorkflowBuilder(template_path, audio_gen_template_path)
+            workflow_builder = WorkflowBuilder(template_path, audio_gen_template_path, multiframe_template_path)
             print(f"Workflow builder initialized with audio_gen template")
 
         # Check if audio_gen template is available
@@ -593,7 +595,7 @@ def audio_gen_handler(event):
 
         # Wait for completion
         try:
-            video_info = wait_for_completion(prompt_id, timeout=600)
+            video_info = wait_for_completion(prompt_id, timeout=1080)
         except TimeoutError as e:
             return {"status": "error", "error": str(e)}
         except RuntimeError as e:
@@ -688,6 +690,335 @@ def audio_gen_handler(event):
         }
 
 
+def multi_keyframe_handler(event):
+    """
+    Handler for multi-keyframe video generation (Mode 3a and 3b).
+
+    Mode 3a: Multi-keyframe + Lip-sync
+    - Input: keyframes[] + audio_url
+    - Output: Video with keyframe guides + lip-sync to provided audio
+
+    Mode 3b: Multi-keyframe + Audio generation
+    - Input: keyframes[] + duration (no audio_url)
+    - Output: Video with keyframe guides + generated audio
+
+    Input format:
+    {
+        "input": {
+            "keyframes": [
+                {"image_url": "https://...", "frame_position": "first", "strength": 1.0},
+                {"image_url": "https://...", "frame_position": "last", "strength": 0.8}
+            ],
+            "audio_url": "https://...",  // Mode 3a: lip-sync
+            // OR
+            "duration": 5.0,             // Mode 3b: audio generation
+            "prompt_positive": "...",    // optional
+            "prompt_negative": "...",    // optional
+            "seed": 12345,               // optional
+            "width": 1280,               // optional
+            "height": 736,               // optional
+            "quality_preset": "high"     // optional: fast, high, ultra
+        }
+    }
+    """
+    global workflow_builder
+
+    start_time = time.time()
+
+    try:
+        # Wait for ComfyUI
+        if not wait_for_comfyui(timeout=120):
+            return {"status": "error", "error": "ComfyUI failed to start"}
+
+        # Initialize workflow builder if needed
+        if workflow_builder is None:
+            template_path = "/comfyui/workflows/ltx2_enhanced.json"
+            audio_gen_template_path = "/comfyui/workflows/ltx2_audio_gen.json"
+            multiframe_template_path = "/comfyui/workflows/ltx2_multiframe.json"
+            if not os.path.exists(template_path):
+                return {"status": "error", "error": f"Workflow template not found: {template_path}"}
+            workflow_builder = WorkflowBuilder(template_path, audio_gen_template_path, multiframe_template_path)
+            print(f"Workflow builder initialized with multiframe template")
+
+        # Check if multiframe template is available
+        if workflow_builder.multiframe_template is None:
+            return {"status": "error", "error": "Multiframe template not loaded"}
+
+        input_data = event.get("input", {})
+
+        # Validate required inputs
+        keyframes = input_data.get("keyframes", [])
+        audio_url = input_data.get("audio_url")
+        duration = input_data.get("duration")
+
+        if not keyframes:
+            return {"status": "error", "error": "Missing required field: keyframes"}
+
+        # Validate keyframes (1-9)
+        if len(keyframes) < 1:
+            return {"status": "error", "error": "At least one keyframe is required"}
+        if len(keyframes) > 9:
+            return {"status": "error", "error": "Maximum 9 keyframes supported"}
+
+        # Validate each keyframe
+        for i, kf in enumerate(keyframes):
+            if not kf.get("image_url"):
+                return {"status": "error", "error": f"Keyframe {i+1} missing image_url"}
+            if not URLDownloader.validate_url(kf["image_url"]):
+                return {"status": "error", "error": f"Invalid image_url in keyframe {i+1}"}
+
+            # Validate frame_position
+            pos = kf.get("frame_position", "first" if i == 0 else "last")
+            if pos not in ["first", "last"]:
+                try:
+                    pos_float = float(pos)
+                    if pos_float < 0.0 or pos_float > 1.0:
+                        return {"status": "error", "error": f"Keyframe {i+1} frame_position must be 'first', 'last', or 0.0-1.0"}
+                except (TypeError, ValueError):
+                    return {"status": "error", "error": f"Invalid frame_position in keyframe {i+1}"}
+
+            # Validate strength
+            strength = kf.get("strength", 1.0 if i == 0 else 0.8)
+            if not isinstance(strength, (int, float)) or strength < 0.0 or strength > 1.0:
+                return {"status": "error", "error": f"Keyframe {i+1} strength must be 0.0-1.0"}
+
+        # Determine mode: 3a (audio_url) or 3b (duration)
+        is_mode_3a = audio_url is not None
+        is_mode_3b = duration is not None and not audio_url
+
+        if not is_mode_3a and not is_mode_3b:
+            return {"status": "error", "error": "Must provide either audio_url (Mode 3a) or duration (Mode 3b)"}
+
+        # Download keyframe images
+        print(f"Step 1/5: Downloading {len(keyframes)} keyframe images...")
+        keyframe_data = []
+        for i, kf in enumerate(keyframes):
+            try:
+                image_bytes, image_filename = URLDownloader.download_image(kf["image_url"])
+            except Exception as e:
+                return {"status": "error", "error": f"Failed to download keyframe {i+1} image: {e}"}
+
+            # Upload to ComfyUI
+            try:
+                image_name = upload_file_to_comfyui(image_bytes, f"keyframe_{i}_{image_filename}")
+            except Exception as e:
+                return {"status": "error", "error": f"Failed to upload keyframe {i+1} image: {e}"}
+
+            keyframe_data.append({
+                "image_name": image_name,
+                "frame_position": kf.get("frame_position", "first" if i == 0 else "last"),
+                "strength": kf.get("strength", 1.0 if i == 0 else 0.8)
+            })
+
+        # Handle audio (Mode 3a) or duration (Mode 3b)
+        audio_name = None
+        audio_duration = None
+
+        if is_mode_3a:
+            # Mode 3a: Download and process audio
+            print("Step 2/5: Downloading audio for lip-sync...")
+            if not URLDownloader.validate_url(audio_url):
+                return {"status": "error", "error": f"Invalid audio_url: {audio_url}"}
+
+            try:
+                audio_bytes, audio_filename, audio_duration = URLDownloader.download_audio(audio_url)
+            except Exception as e:
+                return {"status": "error", "error": f"Failed to download audio: {e}"}
+
+            try:
+                audio_name = upload_file_to_comfyui(audio_bytes, audio_filename)
+            except Exception as e:
+                return {"status": "error", "error": f"Failed to upload audio: {e}"}
+
+            print(f"  Audio duration: {audio_duration:.2f}s")
+        else:
+            # Mode 3b: Validate duration
+            print("Step 2/5: Setting up audio generation...")
+            try:
+                duration = float(duration)
+            except (TypeError, ValueError):
+                return {"status": "error", "error": f"Invalid duration value: {duration}"}
+
+            if duration < 1.0:
+                return {"status": "error", "error": "Duration must be at least 1 second"}
+            if duration > 30.0:
+                return {"status": "error", "error": "Duration cannot exceed 30 seconds"}
+
+            print(f"  Target duration: {duration:.1f}s")
+
+        # Get configuration
+        width = input_data.get("width", 1280)
+        height = input_data.get("height", 736)
+        seed = input_data.get("seed", int(time.time() * 1000) % (2**48))
+        prompt_positive = input_data.get("prompt_positive", DEFAULT_POSITIVE_PROMPT if is_mode_3a else DEFAULT_AUDIO_GEN_POSITIVE_PROMPT)
+        prompt_negative = input_data.get("prompt_negative", DEFAULT_NEGATIVE_PROMPT if is_mode_3a else DEFAULT_AUDIO_GEN_NEGATIVE_PROMPT)
+
+        # Get quality preset
+        quality_preset = input_data.get("quality_preset", "high")
+        if quality_preset not in QUALITY_PRESETS:
+            quality_preset = "high"
+        preset = QUALITY_PRESETS[quality_preset]
+
+        # Allow direct LoRA strength override
+        lora_camera = input_data.get("lora_camera", preset["lora_camera"])
+        lora_distilled = input_data.get("lora_distilled", preset["lora_distilled"])
+        lora_detailer = input_data.get("lora_detailer", preset["lora_detailer"])
+
+        # Image preprocessing parameters
+        img_compression = input_data.get("img_compression", 23)
+
+        # Build workflow
+        print("Step 3/5: Building multi-keyframe workflow...")
+        workflow = workflow_builder.build_multiframe_workflow(
+            keyframes=keyframe_data,
+            audio_name=audio_name,
+            audio_duration=audio_duration,
+            duration=duration if is_mode_3b else None,
+            prompt_positive=prompt_positive,
+            prompt_negative=prompt_negative,
+            seed=seed,
+            width=width,
+            height=height,
+            fps=30,
+            steps=preset["steps"],
+            cfg_scale=1.0,
+            lora_distilled=lora_distilled,
+            lora_detailer=lora_detailer,
+            lora_camera=lora_camera,
+            img_compression=img_compression,
+        )
+
+        # Get video parameters for response
+        gen_params = workflow_builder.get_multiframe_params(
+            keyframes=keyframe_data,
+            audio_duration=audio_duration,
+            duration=duration if is_mode_3b else None,
+            fps=30
+        )
+
+        mode_str = "3a (lip-sync)" if is_mode_3a else "3b (audio-gen)"
+        print(f"  Mode: {mode_str}")
+        print(f"  Resolution: {width}x{height}")
+        print(f"  Keyframes: {len(keyframe_data)}")
+        print(f"  Duration: {gen_params['target_duration']:.1f}s")
+        print(f"  Quality: {quality_preset} ({preset['description']})")
+        print(f"  Seed: {seed}")
+
+        # Submit to ComfyUI
+        print("Step 4/5: Generating video...")
+        payload = {
+            "prompt": workflow,
+            "client_id": f"runpod_multiframe_{int(time.time())}"
+        }
+
+        response = requests.post(f"{COMFYUI_URL}/prompt", json=payload, timeout=30)
+        if response.status_code != 200:
+            return {"status": "error", "error": f"ComfyUI rejected workflow: {response.text}"}
+
+        result = response.json()
+        if "error" in result:
+            return {"status": "error", "error": f"ComfyUI error: {result['error']}"}
+
+        prompt_id = result.get("prompt_id")
+        if not prompt_id:
+            return {"status": "error", "error": "No prompt_id returned from ComfyUI"}
+
+        # Wait for completion
+        try:
+            video_info = wait_for_completion(prompt_id, timeout=1080)
+        except TimeoutError as e:
+            return {"status": "error", "error": str(e)}
+        except RuntimeError as e:
+            return {"status": "error", "error": str(e)}
+
+        # Read and process video
+        video_filename = video_info.get("filename", "output.mp4")
+        video_subfolder = video_info.get("subfolder", "")
+
+        if video_subfolder:
+            video_path = f"/workspace/ComfyUI/output/{video_subfolder}/{video_filename}"
+        else:
+            video_path = f"/workspace/ComfyUI/output/{video_filename}"
+
+        if not os.path.exists(video_path):
+            video_path = f"/comfyui/output/{video_filename}"
+
+        if not os.path.exists(video_path):
+            return {"status": "error", "error": f"Video file not found: {video_filename}"}
+
+        generation_time = time.time() - start_time
+
+        # Get job_id from RunPod event for GCS path organization
+        job_id = event.get("id", None)
+
+        # Upload to GCS
+        print("Step 5/5: Uploading to GCS...")
+        gcs_result = upload_video_to_gcs(
+            video_path=video_path,
+            job_id=job_id,
+            subfolder="ltx2_videos"
+        )
+
+        if not gcs_result["success"]:
+            # Fallback to base64 if GCS upload fails
+            print(f"Warning: GCS upload failed: {gcs_result['error']}")
+            print("Falling back to base64 encoding...")
+            with open(video_path, "rb") as f:
+                video_base64 = base64.b64encode(f.read()).decode()
+
+            return {
+                "status": "success",
+                "output": {
+                    "video_base64": video_base64,
+                    "video_url": None,
+                    "gcs_url": None,
+                    "video_filename": video_filename,
+                    "prompt_id": prompt_id,
+                    "resolution": f"{width}x{height}",
+                    "duration": f"{gen_params['target_duration']:.1f}s",
+                    "frames": gen_params["num_frames"],
+                    "keyframes": len(keyframe_data),
+                    "fps": 30,
+                    "seed": seed,
+                    "quality_preset": quality_preset,
+                    "mode": "3a" if is_mode_3a else "3b",
+                    "generation_time": round(generation_time, 1),
+                    "gcs_error": gcs_result["error"]
+                }
+            }
+
+        # Clean up local file after successful upload
+        delete_local_video(video_path)
+
+        return {
+            "status": "success",
+            "output": {
+                "video_url": gcs_result["public_url"],
+                "gcs_url": gcs_result["gcs_url"],
+                "video_filename": gcs_result["filename"],
+                "video_size_bytes": gcs_result["size_bytes"],
+                "prompt_id": prompt_id,
+                "resolution": f"{width}x{height}",
+                "duration": f"{gen_params['target_duration']:.1f}s",
+                "frames": gen_params["num_frames"],
+                "keyframes": len(keyframe_data),
+                "fps": 30,
+                "seed": seed,
+                "quality_preset": quality_preset,
+                "mode": "3a" if is_mode_3a else "3b",
+                "generation_time": round(generation_time, 1)
+            }
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 # Legacy handler for backward compatibility (accepts pre-built workflow)
 def legacy_handler(event):
     """
@@ -726,7 +1057,7 @@ def legacy_handler(event):
         if not prompt_id:
             return {"error": "No prompt_id returned"}
 
-        video_info = wait_for_completion(prompt_id, timeout=600)
+        video_info = wait_for_completion(prompt_id, timeout=1080)
         video_filename = video_info.get("filename", "output.mp4")
         video_path = f"/workspace/ComfyUI/output/{video_filename}"
 
@@ -760,11 +1091,23 @@ def unified_handler(event):
     - Input: image_url + duration (no audio_url)
     - Output: Video + generated audio
 
+    Mode 3a: Multi-keyframe + Lip-sync
+    - Input: keyframes[] + audio_url
+    - Output: Video with keyframe guides + lip-sync
+
+    Mode 3b: Multi-keyframe + Audio generation
+    - Input: keyframes[] + duration
+    - Output: Video with keyframe guides + generated audio
+
     Legacy: Pre-built workflow
     - Input: workflow object
     - Output: Workflow execution result
     """
     input_data = event.get("input", {})
+
+    # Mode 3: Multi-keyframe (3a with audio_url, 3b with duration)
+    if input_data.get("keyframes"):
+        return multi_keyframe_handler(event)
 
     # Mode 1: Audio-to-Video (lip-sync) - image + audio
     if input_data.get("image_url") and input_data.get("audio_url"):
@@ -780,7 +1123,7 @@ def unified_handler(event):
 
     return {
         "status": "error",
-        "error": "Invalid input. Provide either (image_url + audio_url) for lip-sync, (image_url + duration) for audio generation, or (workflow) for legacy mode."
+        "error": "Invalid input. Provide: (keyframes[] + audio_url/duration) for Mode 3, (image_url + audio_url) for Mode 1, (image_url + duration) for Mode 2, or (workflow) for legacy mode."
     }
 
 
@@ -789,5 +1132,17 @@ if __name__ == "__main__":
     print("Supported input modes:")
     print("  - Mode 1 (Lip-sync): image_url + audio_url")
     print("  - Mode 2 (Audio Gen): image_url + duration")
+    print("  - Mode 3a (Multi-keyframe + Lip-sync): keyframes[] + audio_url")
+    print("  - Mode 3b (Multi-keyframe + Audio Gen): keyframes[] + duration")
     print("  - Legacy mode: workflow + images")
-    runpod.serverless.start({"handler": unified_handler})
+
+    # Check if running in Pod mode (not serverless)
+    pod_mode = os.environ.get("POD_MODE", "").lower() in ("1", "true", "yes")
+    if pod_mode:
+        print("Running in POD_MODE - keeping container alive for testing")
+        print("ComfyUI should be available at http://127.0.0.1:8188")
+        # Keep the process alive
+        import signal
+        signal.pause()
+    else:
+        runpod.serverless.start({"handler": unified_handler})

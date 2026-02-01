@@ -1,0 +1,135 @@
+{
+  "test_info": {
+    "version": "v51",
+    "template_id": "sg197kcekj",
+    "endpoint": "q3pfgomn6a2eee",
+    "docker_image": "nooka210/ltx2-comfyui-worker:v51",
+    "test_time": "2026-01-31"
+  },
+  "mode_3b": {
+    "description": "Multi-keyframe + Audio Generation (无输入音频)",
+    "request": {
+      "input": {
+        "keyframes": [
+          {
+            "image_url": "https://storage.googleapis.com/dramaland-public/test/image_lipsync.png",
+            "frame_position": "first",
+            "strength": 1.0
+          },
+          {
+            "image_url": "https://storage.googleapis.com/dramaland-public/test/动作2.png",
+            "frame_position": 0.5,
+            "strength": 0.8
+          },
+          {
+            "image_url": "https://storage.googleapis.com/dramaland-public/test/动作3.png",
+            "frame_position": "last",
+            "strength": 0.8
+          }
+        ],
+        "duration": 10.0,
+        "prompt": "A person with expressive movements, natural gestures, smooth transitions between scenes",
+        "quality_preset": "fast"
+      }
+    },
+    "response": {
+      "delayTime": 7154,
+      "executionTime": 321656,
+      "id": "335baaef-24ad-4784-9986-f1104c0dfdbf-e1",
+      "output": {
+        "output": {
+          "duration": "10.0s",
+          "fps": 30,
+          "frames": 301,
+          "gcs_url": "gs://dramaland-public/ugc_media/335baaef-24ad-4784-9986-f1104c0dfdbf-e1/ltx2_videos/20260131_174925_ltx2_multiframe_00001-audio.mp4",
+          "generation_time": 321.2,
+          "keyframes": 3,
+          "mode": "3b",
+          "prompt_id": "3a949dd5-be6c-4144-b284-acc1e7a60426",
+          "quality_preset": "fast",
+          "resolution": "1280x736",
+          "seed": 1769881454461,
+          "video_filename": "20260131_174925_ltx2_multiframe_00001-audio.mp4",
+          "video_size_bytes": 4991000,
+          "video_url": "https://storage.googleapis.com/dramaland-public/ugc_media/335baaef-24ad-4784-9986-f1104c0dfdbf-e1/ltx2_videos/20260131_174925_ltx2_multiframe_00001-audio.mp4"
+        },
+        "status": "success"
+      },
+      "status": "COMPLETED",
+      "workerId": "vll4wdk74e2q2r"
+    }
+  },
+  "mode_3a": {
+    "description": "Multi-keyframe + Lip-sync (有输入音频)",
+    "request": {
+      "input": {
+        "keyframes": [
+          {
+            "image_url": "https://storage.googleapis.com/dramaland-public/test/image_lipsync.png",
+            "frame_position": "first",
+            "strength": 1.0
+          },
+          {
+            "image_url": "https://storage.googleapis.com/dramaland-public/test/动作2.png",
+            "frame_position": 0.5,
+            "strength": 0.8
+          },
+          {
+            "image_url": "https://storage.googleapis.com/dramaland-public/test/动作3.png",
+            "frame_position": "last",
+            "strength": 0.8
+          }
+        ],
+        "audio_url": "https://storage.googleapis.com/dramaland-public/test/LV-lipsycn.mp3",
+        "prompt": "A person speaking with expressive movements, natural lip sync, smooth transitions between scenes",
+        "quality_preset": "fast"
+      }
+    },
+    "response": {
+      "delayTime": 6380,
+      "executionTime": 255342,
+      "id": "6e6b41ab-7f99-4965-8cb3-7747cb487880-e1",
+      "output": {
+        "output": {
+          "duration": "15.4s",
+          "fps": 30,
+          "frames": 463,
+          "gcs_url": "gs://dramaland-public/ugc_media/6e6b41ab-7f99-4965-8cb3-7747cb487880-e1/ltx2_videos/20260131_175533_ltx2_multiframe_00001-audio.mp4",
+          "generation_time": 254.8,
+          "keyframes": 3,
+          "mode": "3a",
+          "prompt_id": "7807080a-d221-47b3-8085-df813febef4a",
+          "quality_preset": "fast",
+          "resolution": "1280x736",
+          "seed": 1769881892974,
+          "video_filename": "20260131_175533_ltx2_multiframe_00001-audio.mp4",
+          "video_size_bytes": 8777296,
+          "video_url": "https://storage.googleapis.com/dramaland-public/ugc_media/6e6b41ab-7f99-4965-8cb3-7747cb487880-e1/ltx2_videos/20260131_175533_ltx2_multiframe_00001-audio.mp4"
+        },
+        "status": "success"
+      },
+      "status": "COMPLETED",
+      "workerId": "vll4wdk74e2q2r"
+    }
+  },
+  "key_fix": {
+    "description": "将 frame_idx 和 strength 值包装成数组格式以匹配 ComfyUI v3 DynamicCombo API 要求",
+    "file": "docker/pod_files/workflow_builder.py",
+    "code_change": {
+      "before": [
+        "guide_multi_inputs[f\"num_guides.frame_idx_{idx}\"] = kf_data[\"frame_idx\"]",
+        "guide_multi_inputs[f\"num_guides.strength_{idx}\"] = kf_data[\"strength\"]"
+      ],
+      "after": [
+        "guide_multi_inputs[f\"num_guides.frame_idx_{idx}\"] = [kf_data[\"frame_idx\"]]",
+        "guide_multi_inputs[f\"num_guides.strength_{idx}\"] = [kf_data[\"strength\"]]"
+      ]
+    }
+  },
+  "summary": {
+    "mode_3a_status": "✅ SUCCESS - Multi-keyframe + Lip-sync",
+    "mode_3b_status": "✅ SUCCESS - Multi-keyframe + Audio Generation",
+    "total_versions_tested": "v43-v51 (9 versions)",
+    "final_working_version": "v51"
+  }
+}
