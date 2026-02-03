@@ -6,7 +6,7 @@ RunPod Serverless API for generating video with four modes:
 - **Mode 3a (Multi-keyframe Lip-sync)**: Multiple keyframe images + Audio → Video with smooth keyframe transitions
 - **Mode 3b (Multi-keyframe Audio Gen)**: Multiple keyframe images + Duration → Video + Generated audio with smooth keyframe transitions
 
-**Version**: v57
+**Version**: v58
 
 ## Endpoint
 
@@ -183,6 +183,7 @@ Generate video with multiple keyframe reference images. Supports both lip-sync (
 | `steps` | int | No | preset | Sampling steps (recommend 25+ if lora_distilled=0) |
 | `buffer_seconds` | float | No | 1.0 | Extra video buffer beyond input duration |
 | `trim_to_audio` | bool | No | false | Trim output video to match audio length |
+| `auto_buffer_guide` | bool | No | true | Auto-add guide frame at buffer end (v58) |
 
 ### Frame Position
 
@@ -257,14 +258,16 @@ Mode 3 生成的视频中，关键帧之间会有自然的平滑过渡效果。�
 |-----------|-------------|---------|-------|
 | `buffer_seconds` | Extra video duration beyond input | 1.0 | Helps prevent end-of-video artifacts |
 | `trim_to_audio` | Trim output to audio length | false | Only for Mode 3/4 |
+| `auto_buffer_guide` | Auto-add guide at buffer end | true | v58: Prevents buffer flickering |
 
 **How they work together:**
 - `buffer_seconds=1.0` + `trim_to_audio=false` → Video is 1s longer than input duration
 - `buffer_seconds=1.0` + `trim_to_audio=true` → Generate 1s extra, then trim to match audio
+- `auto_buffer_guide=true` → Automatically adds implicit guide frame at buffer end
 
 **Use cases:**
-- Prevent flickering: Set `buffer_seconds=1.0` (default), `trim_to_audio=true`
-- Keep extra buffer: Set `buffer_seconds=1.0`, `trim_to_audio=false`
+- Prevent flickering: Set `buffer_seconds=1.0`, `auto_buffer_guide=true` (default)
+- Keep extra buffer without guide: Set `auto_buffer_guide=false`
 - No buffer: Set `buffer_seconds=0.0`
 
 ### Notes
@@ -909,6 +912,16 @@ https://storage.googleapis.com/dramaland-public/ugc_media/{job_id}/ltx2_videos/{
 | Concurrent jobs | Worker pool | Worker pool | Worker pool |
 
 ## Changelog
+
+### v58 (2026-02-03)
+- **修复 buffer 区域闪烁**: 新增 `auto_buffer_guide` 参数（默认 `true`）
+  - 当 `buffer_seconds > 0` 时，自动在 buffer 末尾添加一个隐式控制帧
+  - 复用最后一个用户关键帧的图像和 strength
+  - 确保 buffer 区域也有关键帧引导，避免闪烁
+- **问题根因**: v57 的 buffer 区域缺乏关键帧引导，导致生成质量下降
+- **使用方式**:
+  - `auto_buffer_guide=true` (默认): 自动添加隐式控制帧
+  - `auto_buffer_guide=false`: 禁用自动添加，保持 v57 行为
 
 ### v57 (2026-02-03)
 - **修复闪烁**: "last" 关键帧位置现在也参与 `frame_alignment` 对齐，避免末尾闪烁

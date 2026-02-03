@@ -4,15 +4,15 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-LTX-2 Video Generation RunPod Serverless API with six modes:
+LTX-2 Video Generation RunPod Serverless API with four modes:
 - **Mode 1 (Lip-sync)**: Image + Audio → Video with lip synchronization
 - **Mode 2 (Audio Gen)**: Image + Duration → Video + Generated audio
-- **Mode 3a (Multi-keyframe Lip-sync)**: Keyframes[] + Audio → Video (LTXVAddGuideMulti)
-- **Mode 3b (Multi-keyframe Audio Gen)**: Keyframes[] + Duration → Video (LTXVAddGuideMulti)
-- **Mode 4a (Chained Guides Lip-sync)**: Keyframes[] + Audio → Video (Chained LTXVAddGuide, fixes flickering) [v55]
-- **Mode 4b (Chained Guides Audio Gen)**: Keyframes[] + Duration → Video (Chained LTXVAddGuide, fixes flickering) [v55]
+- **Mode 3a (Multi-keyframe Lip-sync)**: Keyframes[] + Audio → Video (Chained LTXVAddGuide)
+- **Mode 3b (Multi-keyframe Audio Gen)**: Keyframes[] + Duration → Video (Chained LTXVAddGuide)
 
 Uses LTX-2 19B model with LoRA optimizations.
+
+**Current Version**: v58 (auto_buffer_guide fix for buffer flickering)
 
 ## Architecture
 
@@ -21,8 +21,6 @@ Mode 1: User Request (image_url, audio_url, prompt)
 Mode 2: User Request (image_url, duration, prompt)
 Mode 3a: User Request (keyframes[], audio_url, prompt)
 Mode 3b: User Request (keyframes[], duration, prompt)
-Mode 4a: User Request (keyframes[], audio_url, use_chained_guides=true)
-Mode 4b: User Request (keyframes[], duration, use_chained_guides=true)
     ↓
 RunPod Serverless API (endpoint: 42qdgmzjc9ldy5)
     ↓
@@ -30,7 +28,7 @@ GPU Workers (RTX 4090/5090, 24GB+ VRAM)
     ├─ ComfyUI Framework
     ├─ LTX-2 19B Model (FP8)
     ├─ LoRA Models (distilled, detailer, camera)
-    └─ KJNodes (LTXVAddGuideMulti for Mode 3, LTXVAddGuide for Mode 4)
+    └─ KJNodes (Chained LTXVAddGuide for Mode 3)
     ↓
 GCS Upload (dramaland-public bucket)
     ↓
@@ -64,8 +62,8 @@ LTX/
 ```bash
 # Build & Push
 cd docker
-docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v55 .
-docker push nooka210/ltx2-comfyui-worker:v55
+docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v58 .
+docker push nooka210/ltx2-comfyui-worker:v58
 
 # Test Mode 1: Lip-sync
 curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
@@ -79,11 +77,11 @@ curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
   -H "Content-Type: application/json" \
   -d '{"input":{"image_url":"...","duration":5.0,"quality_preset":"fast"}}'
 
-# Test Mode 4a: Chained Guides + Lip-sync (Recommended)
+# Test Mode 3a: Multi-keyframe + Lip-sync
 curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"input":{"keyframes":[{"image_url":"..."},{"image_url":"...","frame_position":"last"}],"audio_url":"...","use_chained_guides":true}}'
+  -d '{"input":{"keyframes":[{"image_url":"..."},{"image_url":"...","frame_position":"last"}],"audio_url":"..."}}'
 ```
 
 ## API
@@ -138,10 +136,8 @@ See `docker/API.md` for full documentation.
 | Mode 2 (Audio Gen) | image_url + duration | 视频 + 生成音频 |
 | Mode 3a (Multi-keyframe Lip-sync) | keyframes[] + audio_url | 多关键帧引导视频 + lip-sync |
 | Mode 3b (Multi-keyframe Audio Gen) | keyframes[] + duration | 多关键帧引导视频 + 生成音频 |
-| Mode 4a (Chained Guides Lip-sync) | keyframes[] + audio_url + use_chained_guides=true | 多关键帧引导视频 + lip-sync (无闪烁) |
-| Mode 4b (Chained Guides Audio Gen) | keyframes[] + duration + use_chained_guides=true | 多关键帧引导视频 + 生成音频 (无闪烁) |
 
-## Mode 3/4 关键帧参数
+## Mode 3 关键帧参数
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -149,19 +145,20 @@ See `docker/API.md` for full documentation.
 | keyframes[].image_url | string | 必填 | 关键帧图片 URL |
 | keyframes[].frame_position | string/float | auto | "first", "last", 或 0.0-1.0 |
 | keyframes[].strength | float | 1.0/0.8 | 引导强度 0.0-1.0 |
-| use_chained_guides | bool | false | true=Mode 4 (推荐), false=Mode 3 |
+| buffer_seconds | float | 1.0 | 视频比输入时长多出的 buffer (v57+) |
+| auto_buffer_guide | bool | true | 自动在 buffer 末尾添加控制帧 (v58+) |
 
-## Mode 3 vs Mode 4
+## v58 Buffer 闪烁修复
 
-| 特性 | Mode 3 (LTXVAddGuideMulti) | Mode 4 (Chained LTXVAddGuide) |
-|------|---------------------------|-------------------------------|
-| 节点类型 | 单个多输入节点 | 多个链式节点 |
-| API 格式 | DynamicCombo (有问题) | 直接参数传递 (稳定) |
-| frame_idx | 可能被忽略 | 确保正确使用 |
-| 末尾闪烁 | 可能存在 | 已修复 |
-| 推荐 | 用于对比测试 | **生产环境推荐** |
+v58 新增 `auto_buffer_guide` 参数，解决 buffer 区域闪烁问题：
 
-**注意**: Mode 3/4 使用 KJNodes 节点，已内置于 Docker 镜像
+| 参数 | 作用 | 默认值 |
+|------|------|--------|
+| auto_buffer_guide | 自动在 buffer 末尾添加隐式控制帧 | true |
+
+**原理**: 当 `buffer_seconds > 0` 时，复用最后一个用户关键帧的图像，在 buffer 末尾自动添加一个引导帧，确保生成质量稳定。
+
+**注意**: Mode 3 使用链式 LTXVAddGuide 节点（v56+ 已合并 Mode 4）
 
 ## Notes
 
