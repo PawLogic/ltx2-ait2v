@@ -881,7 +881,8 @@ def multi_keyframe_handler(event):
         trim_to_audio = input_data.get("trim_to_audio", False)  # Default off to prevent flickering
         frame_alignment = input_data.get("frame_alignment", 8)  # Set to 1 to disable alignment
         buffer_seconds = input_data.get("buffer_seconds", 1.0)  # Extra video duration beyond input
-        auto_buffer_guide = input_data.get("auto_buffer_guide", True)  # v58: Auto-add guide at buffer end
+        # v59: Buffer guide strategy - True/"add_node", "extend_last", or False/"none"
+        auto_buffer_guide = input_data.get("auto_buffer_guide", True)
 
         # Allow direct steps override
         steps = input_data.get("steps", preset["steps"])
@@ -891,7 +892,7 @@ def multi_keyframe_handler(event):
             print(f"  Warning: lora_distilled=0 with steps={steps}. Recommend steps >= 20 for quality.")
 
         # v55+: Always use chained LTXVAddGuide nodes (fixes flickering issue)
-        # v58: auto_buffer_guide adds implicit guide at buffer end to prevent buffer flickering
+        # v59: auto_buffer_guide supports dual strategies to prevent buffer flickering
         print("Step 3/5: Building multi-keyframe workflow (chained LTXVAddGuide)...")
         workflow = workflow_builder.build_multiframe_chained_workflow(
             keyframes=keyframe_data,
@@ -938,7 +939,7 @@ def multi_keyframe_handler(event):
         print(f"  trim_to_audio: {trim_to_audio}")
         print(f"  frame_alignment: {frame_alignment}")
         print(f"  buffer_seconds: {buffer_seconds}")
-        print(f"  auto_buffer_guide: {auto_buffer_guide}")
+        print(f"  auto_buffer_guide: {auto_buffer_guide} (strategy: {gen_params.get('buffer_strategy', 'unknown')})")
 
         # Submit to ComfyUI
         print("Step 4/5: Generating video...")
@@ -1164,14 +1165,14 @@ def unified_handler(event):
 
 
 if __name__ == "__main__":
-    print("Starting Enhanced LTX-2 RunPod Handler (v58)")
+    print("Starting Enhanced LTX-2 RunPod Handler (v59)")
     print("Supported input modes:")
     print("  - Mode 1 (Lip-sync): image_url + audio_url")
     print("  - Mode 2 (Audio Gen): image_url + duration")
     print("  - Mode 3a (Multi-keyframe + Lip-sync): keyframes[] + audio_url")
     print("  - Mode 3b (Multi-keyframe + Audio Gen): keyframes[] + duration")
     print("  - Legacy mode: workflow + images")
-    print("Note: Mode 3 uses chained LTXVAddGuide nodes (v58 fix: auto_buffer_guide)")
+    print("Note: Mode 3 uses chained LTXVAddGuide nodes (v59: dual buffer guide strategies)")
 
     # Check if running in Pod mode (not serverless)
     pod_mode = os.environ.get("POD_MODE", "").lower() in ("1", "true", "yes")

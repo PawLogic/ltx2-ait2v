@@ -725,7 +725,7 @@ class WorkflowBuilder:
         fps: int = 30,
         frame_alignment: int = 8,
         buffer_seconds: float = 1.0,
-        auto_buffer_guide: bool = True
+        auto_buffer_guide: Union[bool, str] = True
     ) -> dict:
         """
         Calculate video/audio parameters for multiframe mode.
@@ -737,10 +737,10 @@ class WorkflowBuilder:
             fps: Video frames per second
             frame_alignment: Frame alignment interval (default 8, set to 1 to disable)
             buffer_seconds: Extra buffer time beyond input duration (default 1.0s)
-            auto_buffer_guide: Whether auto buffer guide is enabled (default True)
+            auto_buffer_guide: Buffer guide strategy (True/"add_node", "extend_last", or False/"none")
 
         Returns:
-            dict with num_frames, audio_frames, keyframe info, buffer_seconds, auto_buffer_guide, etc.
+            dict with num_frames, audio_frames, keyframe info, buffer_seconds, buffer_strategy, etc.
         """
         is_audio_gen = audio_duration is None and duration is not None
 
@@ -769,13 +769,21 @@ class WorkflowBuilder:
                 "strength": kf.get("strength", 1.0)
             })
 
-        # Check if auto buffer guide will be added
-        has_auto_buffer_guide = False
-        if buffer_seconds > 0 and auto_buffer_guide and len(keyframe_info) > 0:
+        # Normalize buffer strategy
+        if auto_buffer_guide is True or auto_buffer_guide == "add_node":
+            buffer_strategy = "add_node"
+        elif auto_buffer_guide == "extend_last":
+            buffer_strategy = "extend_last"
+        else:
+            buffer_strategy = "none"
+
+        # Check if buffer guide will be applied
+        buffer_guide_applied = False
+        if buffer_seconds > 0 and buffer_strategy != "none" and len(keyframe_info) > 0:
             buffer_end_frame = self._calculate_frame_index("last", num_frames, frame_alignment)
             last_kf_frame = keyframe_info[-1]["frame_idx"]
             if last_kf_frame < buffer_end_frame:
-                has_auto_buffer_guide = True
+                buffer_guide_applied = True
 
         return {
             "num_frames": num_frames,
@@ -788,8 +796,8 @@ class WorkflowBuilder:
             "num_keyframes": len(keyframes),
             "keyframes": keyframe_info,
             "frame_alignment": frame_alignment,
-            "auto_buffer_guide": auto_buffer_guide,
-            "has_auto_buffer_guide": has_auto_buffer_guide
+            "buffer_strategy": buffer_strategy,
+            "buffer_guide_applied": buffer_guide_applied
         }
 
     def build_multiframe_chained_workflow(
@@ -813,7 +821,7 @@ class WorkflowBuilder:
         trim_to_audio: bool = False,
         frame_alignment: int = 8,
         buffer_seconds: float = 1.0,
-        auto_buffer_guide: bool = True,
+        auto_buffer_guide: Union[bool, str] = True,
     ) -> dict:
         """
         Build workflow for multi-keyframe video generation using chained LTXVAddGuide nodes (Mode 4).
@@ -848,7 +856,10 @@ class WorkflowBuilder:
             trim_to_audio: Whether to trim video to audio length (default False)
             frame_alignment: Frame alignment interval for keyframes (default 8)
             buffer_seconds: Extra buffer time beyond input duration (default 1.0s)
-            auto_buffer_guide: Auto-add guide frame at buffer end to prevent flickering (default True)
+            auto_buffer_guide: Buffer guide strategy to prevent flickering (default True):
+                - True or "add_node": Add implicit guide node at buffer end (方案 A)
+                - "extend_last": Move last keyframe position to buffer end (方案 C)
+                - False or "none": Disable buffer guide
 
         Returns:
             Complete workflow ready for ComfyUI execution
@@ -946,26 +957,43 @@ class WorkflowBuilder:
             })
 
         # ============================================================
-        # v58: AUTO BUFFER GUIDE - Add implicit control frame at buffer end
-        # This prevents flickering in the buffer region by ensuring the last
-        # user keyframe's image continues to guide generation until the very end.
+        # v59: BUFFER GUIDE STRATEGIES - Prevent flickering in buffer region
+        # Strategy A ("add_node"): Add implicit guide node at buffer end
+        # Strategy C ("extend_last"): Move last keyframe position to buffer end
         # ============================================================
-        if buffer_seconds > 0 and auto_buffer_guide and len(keyframe_node_ids) > 0:
+
+        # Normalize auto_buffer_guide to strategy string
+        if auto_buffer_guide is True or auto_buffer_guide == "add_node":
+            buffer_strategy = "add_node"
+        elif auto_buffer_guide == "extend_last":
+            buffer_strategy = "extend_last"
+        else:
+            buffer_strategy = "none"
+
+        if buffer_seconds > 0 and buffer_strategy != "none" and len(keyframe_node_ids) > 0:
             # Calculate the buffer end frame position (aligned)
             buffer_end_frame = self._calculate_frame_index("last", num_frames, frame_alignment)
 
             # Get the last user keyframe
             last_user_kf = keyframe_node_ids[-1]
 
-            # Only add implicit guide if last user keyframe isn't already at buffer end
+            # Only apply if last user keyframe isn't already at buffer end
             if last_user_kf["frame_idx"] < buffer_end_frame:
-                implicit_buffer_kf = {
-                    "preprocess_node_id": last_user_kf["preprocess_node_id"],  # Reuse same image
-                    "frame_idx": buffer_end_frame,
-                    "strength": last_user_kf["strength"]  # Reuse same strength
-                }
-                keyframe_node_ids.append(implicit_buffer_kf)
-                print(f"  [v58] Auto-added buffer guide at frame {buffer_end_frame} (reusing last keyframe)")
+                if buffer_strategy == "add_node":
+                    # Strategy A: Add implicit guide node at buffer end
+                    implicit_buffer_kf = {
+                        "preprocess_node_id": last_user_kf["preprocess_node_id"],  # Reuse same image
+                        "frame_idx": buffer_end_frame,
+                        "strength": last_user_kf["strength"]  # Reuse same strength
+                    }
+                    keyframe_node_ids.append(implicit_buffer_kf)
+                    print(f"  [v59] Strategy 'add_node': Added implicit guide at frame {buffer_end_frame}")
+
+                elif buffer_strategy == "extend_last":
+                    # Strategy C: Move last keyframe position to buffer end (no extra node)
+                    original_frame = last_user_kf["frame_idx"]
+                    last_user_kf["frame_idx"] = buffer_end_frame
+                    print(f"  [v59] Strategy 'extend_last': Moved last keyframe from frame {original_frame} to {buffer_end_frame}")
 
         # ============================================================
         # KEY DIFFERENCE: Chain individual LTXVAddGuide nodes

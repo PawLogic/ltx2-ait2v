@@ -12,7 +12,7 @@ LTX-2 Video Generation RunPod Serverless API with four modes:
 
 Uses LTX-2 19B model with LoRA optimizations.
 
-**Current Version**: v58 (auto_buffer_guide fix for buffer flickering)
+**Current Version**: v59 (dual buffer guide strategies: add_node / extend_last)
 
 ## Architecture
 
@@ -62,8 +62,8 @@ LTX/
 ```bash
 # Build & Push
 cd docker
-docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v58 .
-docker push nooka210/ltx2-comfyui-worker:v58
+docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v59 .
+docker push nooka210/ltx2-comfyui-worker:v59
 
 # Test Mode 1: Lip-sync
 curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
@@ -146,17 +146,21 @@ See `docker/API.md` for full documentation.
 | keyframes[].frame_position | string/float | auto | "first", "last", 或 0.0-1.0 |
 | keyframes[].strength | float | 1.0/0.8 | 引导强度 0.0-1.0 |
 | buffer_seconds | float | 1.0 | 视频比输入时长多出的 buffer (v57+) |
-| auto_buffer_guide | bool | true | 自动在 buffer 末尾添加控制帧 (v58+) |
+| auto_buffer_guide | bool/string | true | Buffer 策略: `true`/`"add_node"`, `"extend_last"`, `false` (v59) |
 
-## v58 Buffer 闪烁修复
+## v59 Buffer 闪烁修复 (双策略)
 
-v58 新增 `auto_buffer_guide` 参数，解决 buffer 区域闪烁问题：
+v59 的 `auto_buffer_guide` 参数支持多种策略解决 buffer 区域闪烁问题：
 
-| 参数 | 作用 | 默认值 |
-|------|------|--------|
-| auto_buffer_guide | 自动在 buffer 末尾添加隐式控制帧 | true |
+| 值 | 策略 | 说明 |
+|---|---|---|
+| `true` 或 `"add_node"` | 方案 A | 添加隐式节点（默认，推荐）|
+| `"extend_last"` | 方案 C | 将最后关键帧移动到 buffer 末尾 |
+| `false` 或 `"none"` | 禁用 | 保持 v57 行为 |
 
-**原理**: 当 `buffer_seconds > 0` 时，复用最后一个用户关键帧的图像，在 buffer 末尾自动添加一个引导帧，确保生成质量稳定。
+**策略对比**:
+- **add_node**: 复用最后关键帧图像，在 buffer 末尾添加隐式引导帧。不改变用户关键帧语义。
+- **extend_last**: 直接将最后关键帧位置移动到 buffer 末尾。无额外节点，但改变了最后关键帧的原始位置。
 
 **注意**: Mode 3 使用链式 LTXVAddGuide 节点（v56+ 已合并 Mode 4）
 
