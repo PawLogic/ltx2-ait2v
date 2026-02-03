@@ -55,11 +55,11 @@ QUALITY_PRESETS = {
 
 # Default prompts
 DEFAULT_POSITIVE_PROMPT = "A person speaks naturally with perfect lip synchronization, high quality, detailed facial expressions"
-DEFAULT_NEGATIVE_PROMPT = "static, bad teeth, blurry, low quality, pixelated, compressed artifacts"
+DEFAULT_NEGATIVE_PROMPT = "static, bad teeth, blurry, low quality, pixelated, compressed artifacts, flickering"
 
 # Default prompts for audio generation mode (no input audio)
 DEFAULT_AUDIO_GEN_POSITIVE_PROMPT = "A person speaking naturally, high quality, detailed facial expressions, natural movements"
-DEFAULT_AUDIO_GEN_NEGATIVE_PROMPT = "static, blurry, low quality, pixelated, compressed artifacts"
+DEFAULT_AUDIO_GEN_NEGATIVE_PROMPT = "static, blurry, low quality, pixelated, compressed artifacts, flickering"
 
 # Initialize workflow builder (will be done after ComfyUI is ready)
 workflow_builder = None
@@ -694,6 +694,8 @@ def multi_keyframe_handler(event):
     """
     Handler for multi-keyframe video generation (Mode 3a and 3b).
 
+    Uses chained LTXVAddGuide nodes for reliable keyframe positioning (v55+).
+
     Mode 3a: Multi-keyframe + Lip-sync
     - Input: keyframes[] + audio_url
     - Output: Video with keyframe guides + lip-sync to provided audio
@@ -867,9 +869,21 @@ def multi_keyframe_handler(event):
         # Image preprocessing parameters
         img_compression = input_data.get("img_compression", 23)
 
-        # Build workflow
-        print("Step 3/5: Building multi-keyframe workflow...")
-        workflow = workflow_builder.build_multiframe_workflow(
+        # Mode 3 specific parameters
+        trim_to_audio = input_data.get("trim_to_audio", False)  # Default off to prevent flickering
+        frame_alignment = input_data.get("frame_alignment", 8)  # Set to 1 to disable alignment
+
+        # Allow direct steps override
+        steps = input_data.get("steps", preset["steps"])
+
+        # Warn if distilled LoRA is disabled but steps is low
+        if lora_distilled == 0 and steps < 20:
+            print(f"  Warning: lora_distilled=0 with steps={steps}. Recommend steps >= 20 for quality.")
+
+        # v55+: Always use chained LTXVAddGuide nodes (fixes flickering issue)
+        # The old LTXVAddGuideMulti approach is deprecated
+        print("Step 3/5: Building multi-keyframe workflow (chained LTXVAddGuide)...")
+        workflow = workflow_builder.build_multiframe_chained_workflow(
             keyframes=keyframe_data,
             audio_name=audio_name,
             audio_duration=audio_duration,
@@ -880,12 +894,14 @@ def multi_keyframe_handler(event):
             width=width,
             height=height,
             fps=30,
-            steps=preset["steps"],
+            steps=steps,
             cfg_scale=1.0,
             lora_distilled=lora_distilled,
             lora_detailer=lora_detailer,
             lora_camera=lora_camera,
             img_compression=img_compression,
+            trim_to_audio=trim_to_audio,
+            frame_alignment=frame_alignment,
         )
 
         # Get video parameters for response
@@ -893,7 +909,8 @@ def multi_keyframe_handler(event):
             keyframes=keyframe_data,
             audio_duration=audio_duration,
             duration=duration if is_mode_3b else None,
-            fps=30
+            fps=30,
+            frame_alignment=frame_alignment
         )
 
         mode_str = "3a (lip-sync)" if is_mode_3a else "3b (audio-gen)"
@@ -902,7 +919,10 @@ def multi_keyframe_handler(event):
         print(f"  Keyframes: {len(keyframe_data)}")
         print(f"  Duration: {gen_params['target_duration']:.1f}s")
         print(f"  Quality: {quality_preset} ({preset['description']})")
+        print(f"  Steps: {steps}")
         print(f"  Seed: {seed}")
+        print(f"  trim_to_audio: {trim_to_audio}")
+        print(f"  frame_alignment: {frame_alignment}")
 
         # Submit to ComfyUI
         print("Step 4/5: Generating video...")
@@ -1128,13 +1148,14 @@ def unified_handler(event):
 
 
 if __name__ == "__main__":
-    print("Starting Enhanced LTX-2 RunPod Handler")
+    print("Starting Enhanced LTX-2 RunPod Handler (v56)")
     print("Supported input modes:")
     print("  - Mode 1 (Lip-sync): image_url + audio_url")
     print("  - Mode 2 (Audio Gen): image_url + duration")
     print("  - Mode 3a (Multi-keyframe + Lip-sync): keyframes[] + audio_url")
     print("  - Mode 3b (Multi-keyframe + Audio Gen): keyframes[] + duration")
     print("  - Legacy mode: workflow + images")
+    print("Note: Mode 3 uses chained LTXVAddGuide nodes (v56 fix for flickering)")
 
     # Check if running in Pod mode (not serverless)
     pod_mode = os.environ.get("POD_MODE", "").lower() in ("1", "true", "yes")

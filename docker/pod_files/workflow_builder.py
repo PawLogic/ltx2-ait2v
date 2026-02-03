@@ -292,7 +292,8 @@ class WorkflowBuilder:
     def _calculate_frame_index(
         self,
         position: Union[str, float],
-        total_frames: int
+        total_frames: int,
+        frame_alignment: int = 8
     ) -> int:
         """
         Convert frame position to absolute frame index.
@@ -300,14 +301,17 @@ class WorkflowBuilder:
         Args:
             position: "first", "last", or 0.0-1.0 normalized position
             total_frames: Total number of video frames
+            frame_alignment: Frame alignment interval (default 8, set to 1 to disable)
 
         Returns:
-            Absolute frame index (0-indexed, or -1 for last frame)
+            Absolute frame index (0-indexed, explicit value - never -1)
         """
+        last_frame = total_frames - 1
+
         if position == "first":
             return 0
         if position == "last":
-            return -1  # LTXVAddGuideMulti supports -1 for last frame
+            return last_frame  # Explicit last frame index instead of -1
 
         # Normalize to float
         try:
@@ -320,19 +324,19 @@ class WorkflowBuilder:
 
         # Calculate frame index
         if pos >= 1.0:
-            return -1  # Last frame
+            return last_frame  # Explicit last frame index
         if pos <= 0.0:
             return 0  # First frame
 
         # Calculate intermediate frame index
-        # For best stability, align to frames divisible by 8
-        idx = int(pos * (total_frames - 1))
-        idx = (idx // 8) * 8  # Align to 8-frame boundary
+        idx = int(pos * last_frame)
+
+        # Apply frame alignment if alignment > 1
+        if frame_alignment > 1:
+            idx = (idx // frame_alignment) * frame_alignment
 
         # Ensure we don't exceed bounds
-        if idx >= total_frames - 1:
-            return -1
-        return max(0, idx)
+        return max(0, min(idx, last_frame))
 
     def build_multiframe_workflow(
         self,
@@ -352,6 +356,8 @@ class WorkflowBuilder:
         lora_detailer: float = 1.0,
         lora_camera: float = 0.3,
         img_compression: int = 23,
+        trim_to_audio: bool = False,
+        frame_alignment: int = 8,
     ) -> dict:
         """
         Build workflow for multi-keyframe video generation (Mode 3).
@@ -378,6 +384,8 @@ class WorkflowBuilder:
             lora_detailer: Detailer LoRA strength (default 1.0)
             lora_camera: Camera LoRA strength (default 0.3)
             img_compression: Image compression level (default 23)
+            trim_to_audio: Whether to trim video to audio length (default False)
+            frame_alignment: Frame alignment interval for keyframes (default 8, set to 1 to disable)
 
         Returns:
             Complete workflow ready for ComfyUI execution
@@ -464,7 +472,7 @@ class WorkflowBuilder:
             node_id += 1
 
             # Calculate frame index
-            frame_idx = self._calculate_frame_index(frame_position, num_frames)
+            frame_idx = self._calculate_frame_index(frame_position, num_frames, frame_alignment)
 
             keyframe_node_ids.append({
                 "preprocess_node_id": preprocess_node_id,
@@ -656,7 +664,7 @@ class WorkflowBuilder:
                 "pix_fmt": "yuv420p",
                 "crf": 19,
                 "save_metadata": True,
-                "trim_to_audio": True,
+                "trim_to_audio": trim_to_audio,
                 "pingpong": False,
                 "save_output": True,
                 "images": ["234", 0],
@@ -691,7 +699,8 @@ class WorkflowBuilder:
         keyframes: List[Dict[str, Any]],
         duration: Optional[float] = None,
         audio_duration: Optional[float] = None,
-        fps: int = 30
+        fps: int = 30,
+        frame_alignment: int = 8
     ) -> dict:
         """
         Calculate video/audio parameters for multiframe mode.
@@ -701,6 +710,7 @@ class WorkflowBuilder:
             duration: Target duration for audio generation mode
             audio_duration: Audio duration for lip-sync mode
             fps: Video frames per second
+            frame_alignment: Frame alignment interval (default 8, set to 1 to disable)
 
         Returns:
             dict with num_frames, audio_frames, keyframe info, etc.
@@ -723,7 +733,7 @@ class WorkflowBuilder:
         keyframe_info = []
         for i, kf in enumerate(keyframes):
             position = kf.get("frame_position", "first" if i == 0 else "last")
-            frame_idx = self._calculate_frame_index(position, num_frames)
+            frame_idx = self._calculate_frame_index(position, num_frames, frame_alignment)
             keyframe_info.append({
                 "position": position,
                 "frame_idx": frame_idx,
@@ -738,5 +748,374 @@ class WorkflowBuilder:
             "fps": fps,
             "mode": "audio_gen" if is_audio_gen else "lip_sync",
             "num_keyframes": len(keyframes),
-            "keyframes": keyframe_info
+            "keyframes": keyframe_info,
+            "frame_alignment": frame_alignment
         }
+
+    def build_multiframe_chained_workflow(
+        self,
+        keyframes: List[Dict[str, Any]],
+        audio_name: Optional[str] = None,
+        audio_duration: Optional[float] = None,
+        duration: Optional[float] = None,
+        prompt_positive: str = "",
+        prompt_negative: str = "",
+        seed: int = 0,
+        width: int = 1280,
+        height: int = 736,
+        fps: int = 30,
+        steps: int = 8,
+        cfg_scale: float = 1.0,
+        lora_distilled: float = 0.6,
+        lora_detailer: float = 1.0,
+        lora_camera: float = 0.3,
+        img_compression: int = 23,
+        trim_to_audio: bool = False,
+        frame_alignment: int = 8,
+    ) -> dict:
+        """
+        Build workflow for multi-keyframe video generation using chained LTXVAddGuide nodes (Mode 4).
+
+        This is an alternative to build_multiframe_workflow that uses individual chained
+        LTXVAddGuide nodes instead of LTXVAddGuideMulti. This approach avoids the
+        DynamicCombo API issues that cause frame_idx to be ignored.
+
+        Mode 4a: Keyframes + Lip-sync (audio_url provided)
+        Mode 4b: Keyframes + Audio generation (duration provided)
+
+        Args:
+            keyframes: List of keyframe dicts with keys:
+                - image_name: Uploaded image filename in ComfyUI
+                - frame_position: "first", "last", or 0.0-1.0 normalized
+                - strength: Guide strength 0.0-1.0 (default 1.0)
+            audio_name: Uploaded audio filename (Mode 4a: lip-sync)
+            audio_duration: Audio duration in seconds (Mode 4a)
+            duration: Target duration in seconds (Mode 4b: audio generation)
+            prompt_positive: Positive prompt text
+            prompt_negative: Negative prompt text
+            seed: Random seed for generation
+            width: Video width (must be divisible by 32)
+            height: Video height (must be divisible by 32)
+            fps: Frames per second (default 30)
+            steps: Sampling steps (default 8)
+            cfg_scale: CFG scale (default 1.0)
+            lora_distilled: Distilled LoRA strength (default 0.6)
+            lora_detailer: Detailer LoRA strength (default 1.0)
+            lora_camera: Camera LoRA strength (default 0.3)
+            img_compression: Image compression level (default 23)
+            trim_to_audio: Whether to trim video to audio length (default False)
+            frame_alignment: Frame alignment interval for keyframes (default 8)
+
+        Returns:
+            Complete workflow ready for ComfyUI execution
+
+        Raises:
+            ValueError: If keyframes is empty or exceeds MAX_KEYFRAMES
+            RuntimeError: If multiframe template is not loaded
+        """
+        if self.multiframe_template is None:
+            raise RuntimeError("Multiframe template not loaded")
+
+        if not keyframes:
+            raise ValueError("At least one keyframe is required")
+        if len(keyframes) > self.MAX_KEYFRAMES:
+            raise ValueError(f"Maximum {self.MAX_KEYFRAMES} keyframes supported")
+
+        # Determine mode and calculate frames
+        is_audio_gen = audio_name is None and duration is not None
+        if is_audio_gen:
+            # Mode 4b: Audio generation
+            num_frames = math.ceil(duration * fps) + 1
+            audio_frames = math.ceil(duration * 25)
+        else:
+            # Mode 4a: Lip-sync with input audio
+            num_frames = math.ceil(audio_duration * fps) + 1
+            audio_frames = None
+
+        if num_frames < 30:
+            num_frames = 30
+
+        # Start with base template
+        workflow = copy.deepcopy(self.multiframe_template)
+
+        # Node ID counter for dynamic nodes (start from 400 to avoid conflicts)
+        node_id = 400
+
+        # Create load/resize/preprocess nodes for each keyframe
+        keyframe_node_ids = []
+        for i, kf in enumerate(keyframes):
+            image_name = kf.get("image_name", "")
+            frame_position = kf.get("frame_position", "first" if i == 0 else "last")
+            strength = kf.get("strength", 1.0)
+
+            # LoadImage node
+            load_node_id = str(node_id)
+            workflow[load_node_id] = {
+                "inputs": {
+                    "image": image_name,
+                    "upload": "image"
+                },
+                "class_type": "LoadImage",
+                "_meta": {"title": f"Load Keyframe {i+1}"}
+            }
+            node_id += 1
+
+            # ImageResizeKJv2 node
+            resize_node_id = str(node_id)
+            workflow[resize_node_id] = {
+                "inputs": {
+                    "image": [load_node_id, 0],
+                    "width": width,
+                    "height": height,
+                    "upscale_method": "lanczos",
+                    "keep_proportion": "pad",
+                    "pad_color": "0, 0, 0",
+                    "crop_position": "center",
+                    "divisible_by": 32
+                },
+                "class_type": "ImageResizeKJv2",
+                "_meta": {"title": f"Resize Keyframe {i+1}"}
+            }
+            node_id += 1
+
+            # LTXVPreprocess node
+            preprocess_node_id = str(node_id)
+            workflow[preprocess_node_id] = {
+                "inputs": {
+                    "image": [resize_node_id, 0],
+                    "img_compression": img_compression
+                },
+                "class_type": "LTXVPreprocess",
+                "_meta": {"title": f"Preprocess Keyframe {i+1}"}
+            }
+            node_id += 1
+
+            # Calculate frame index
+            frame_idx = self._calculate_frame_index(frame_position, num_frames, frame_alignment)
+
+            keyframe_node_ids.append({
+                "preprocess_node_id": preprocess_node_id,
+                "frame_idx": frame_idx,
+                "strength": strength
+            })
+
+        # ============================================================
+        # KEY DIFFERENCE: Chain individual LTXVAddGuide nodes
+        # Instead of LTXVAddGuideMulti, we create separate LTXVAddGuide
+        # nodes and chain them together. This ensures frame_idx is
+        # correctly passed as a direct parameter, not through DynamicCombo.
+        # ============================================================
+
+        # Initial connections from base template nodes:
+        # - LTXVConditioning (164): outputs (positive, negative)
+        # - EmptyLTXVLatentVideo (162): outputs (latent)
+        prev_positive = ["164", 0]  # LTXVConditioning positive output
+        prev_negative = ["164", 1]  # LTXVConditioning negative output
+        prev_latent = ["162", 0]    # EmptyLTXVLatentVideo output
+
+        # Create chained LTXVAddGuide nodes
+        for i, kf_data in enumerate(keyframe_node_ids):
+            guide_node_id = str(node_id)
+            workflow[guide_node_id] = {
+                "inputs": {
+                    "image": [kf_data["preprocess_node_id"], 0],
+                    "frame_idx": kf_data["frame_idx"],
+                    "strength": kf_data["strength"],
+                    "positive": prev_positive,
+                    "negative": prev_negative,
+                    "latent": prev_latent,
+                    "vae": ["184", 2]  # CheckpointLoaderSimple VAE output
+                },
+                "class_type": "LTXVAddGuide",
+                "_meta": {"title": f"Guide Keyframe {i+1} (frame {kf_data['frame_idx']})"}
+            }
+
+            # Chain: each node's output becomes the next node's input
+            prev_positive = [guide_node_id, 0]
+            prev_negative = [guide_node_id, 1]
+            prev_latent = [guide_node_id, 2]
+            node_id += 1
+
+        # Store last guide node outputs for later use
+        last_guide_positive = prev_positive
+        last_guide_negative = prev_negative
+        last_guide_latent = prev_latent
+
+        # Update CFGGuider (153) to use the last guide's conditioning
+        workflow["153"]["inputs"]["positive"] = last_guide_positive
+        workflow["153"]["inputs"]["negative"] = last_guide_negative
+
+        # Create audio handling nodes based on mode
+        if is_audio_gen:
+            # Mode 4b: Generate audio with LTXVEmptyLatentAudio
+            empty_audio_node_id = str(node_id)
+            workflow[empty_audio_node_id] = {
+                "inputs": {
+                    "frames_number": audio_frames,
+                    "frame_rate": 25,
+                    "batch_size": 1,
+                    "audio_vae": ["171", 0]
+                },
+                "class_type": "LTXVEmptyLatentAudio",
+                "_meta": {"title": "Empty Audio Latent"}
+            }
+            node_id += 1
+
+            # LTXVConcatAVLatent - combine video and audio latents
+            concat_node_id = str(node_id)
+            workflow[concat_node_id] = {
+                "inputs": {
+                    "video_latent": last_guide_latent,  # From last chained guide
+                    "audio_latent": [empty_audio_node_id, 0]
+                },
+                "class_type": "LTXVConcatAVLatent",
+                "_meta": {"title": "Concat AV Latent"}
+            }
+            node_id += 1
+
+            # Audio decode for output
+            audio_decode_node_id = str(node_id)
+            workflow[audio_decode_node_id] = {
+                "inputs": {
+                    "samples": ["245", 1],  # Audio from LTXVSeparateAVLatent
+                    "audio_vae": ["171", 0]
+                },
+                "class_type": "LTXVAudioVAEDecode",
+                "_meta": {"title": "Audio VAE Decode"}
+            }
+            node_id += 1
+
+            audio_output_ref = [audio_decode_node_id, 0]
+
+        else:
+            # Mode 4a: Use input audio
+            # LoadAudio node
+            load_audio_node_id = str(node_id)
+            workflow[load_audio_node_id] = {
+                "inputs": {
+                    "audio": audio_name
+                },
+                "class_type": "LoadAudio",
+                "_meta": {"title": "Load Audio"}
+            }
+            node_id += 1
+
+            # TrimAudioDuration node
+            trim_audio_node_id = str(node_id)
+            workflow[trim_audio_node_id] = {
+                "inputs": {
+                    "audio": [load_audio_node_id, 0],
+                    "max_duration": audio_duration,
+                    "duration": audio_duration,
+                    "start_index": 0
+                },
+                "class_type": "TrimAudioDuration",
+                "_meta": {"title": "Trim Audio"}
+            }
+            node_id += 1
+
+            # Audio VAE Encode
+            audio_encode_node_id = str(node_id)
+            workflow[audio_encode_node_id] = {
+                "inputs": {
+                    "audio": [trim_audio_node_id, 0],
+                    "audio_vae": ["171", 0]
+                },
+                "class_type": "LTXVAudioVAEEncode",
+                "_meta": {"title": "Audio VAE Encode"}
+            }
+            node_id += 1
+
+            # Audio noise mask
+            solid_mask_node_id = str(node_id)
+            workflow[solid_mask_node_id] = {
+                "inputs": {
+                    "value": 0,
+                    "width": width,
+                    "height": height
+                },
+                "class_type": "SolidMask",
+                "_meta": {"title": "Audio Mask"}
+            }
+            node_id += 1
+
+            # SetLatentNoiseMask
+            set_mask_node_id = str(node_id)
+            workflow[set_mask_node_id] = {
+                "inputs": {
+                    "samples": [audio_encode_node_id, 0],
+                    "mask": [solid_mask_node_id, 0]
+                },
+                "class_type": "SetLatentNoiseMask",
+                "_meta": {"title": "Set Noise Mask"}
+            }
+            node_id += 1
+
+            # LTXVConcatAVLatent - combine video and audio latents
+            concat_node_id = str(node_id)
+            workflow[concat_node_id] = {
+                "inputs": {
+                    "video_latent": last_guide_latent,  # From last chained guide
+                    "audio_latent": [set_mask_node_id, 0]
+                },
+                "class_type": "LTXVConcatAVLatent",
+                "_meta": {"title": "Concat AV Latent"}
+            }
+            node_id += 1
+
+            audio_output_ref = [trim_audio_node_id, 0]
+
+        # Add SamplerCustomAdvanced node
+        sampler_node_id = "161"
+        workflow[sampler_node_id] = {
+            "inputs": {
+                "noise": ["178", 0],
+                "guider": ["153", 0],
+                "sampler": ["154", 0],
+                "sigmas": ["238", 0],
+                "latent_image": [concat_node_id, 0]
+            },
+            "class_type": "SamplerCustomAdvanced",
+            "_meta": {"title": "Sampler"}
+        }
+
+        # Add VHS_VideoCombine output node
+        video_output_node_id = "190"
+        workflow[video_output_node_id] = {
+            "inputs": {
+                "frame_rate": fps,
+                "loop_count": 0,
+                "filename_prefix": "ltx2_multiframe_chained",
+                "format": "video/h264-mp4",
+                "pix_fmt": "yuv420p",
+                "crf": 19,
+                "save_metadata": True,
+                "trim_to_audio": trim_to_audio,
+                "pingpong": False,
+                "save_output": True,
+                "images": ["234", 0],
+                "audio": audio_output_ref
+            },
+            "class_type": "VHS_VideoCombine",
+            "_meta": {"title": "Video Output"}
+        }
+
+        # Inject remaining parameters
+        params = {
+            "WIDTH": width,
+            "HEIGHT": height,
+            "NUM_FRAMES": num_frames,
+            "FPS": fps,
+            "PROMPT_POSITIVE": prompt_positive,
+            "PROMPT_NEGATIVE": prompt_negative,
+            "SEED": seed,
+            "STEPS": steps,
+            "CFG_SCALE": cfg_scale,
+            "LORA_DISTILLED_STRENGTH": lora_distilled,
+            "LORA_DETAILER_STRENGTH": lora_detailer,
+            "LORA_CAMERA_STRENGTH": lora_camera,
+        }
+
+        workflow = self._inject_parameters(workflow, params)
+
+        return workflow

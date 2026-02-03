@@ -3,18 +3,16 @@
 RunPod Serverless API for generating video with four modes:
 - **Mode 1 (Lip-sync)**: Image + Audio → Video with lip synchronization
 - **Mode 2 (Audio Gen)**: Image + Duration → Video + Generated audio
-- **Mode 3a (Multi-keyframe Lip-sync)**: Multiple keyframe images + Audio → Video with keyframe guides
-- **Mode 3b (Multi-keyframe Audio Gen)**: Multiple keyframe images + Duration → Video + Generated audio
+- **Mode 3a (Multi-keyframe Lip-sync)**: Multiple keyframe images + Audio → Video with smooth keyframe transitions
+- **Mode 3b (Multi-keyframe Audio Gen)**: Multiple keyframe images + Duration → Video + Generated audio with smooth keyframe transitions
 
-**Version**: v53
+**Version**: v56
 
 ## Endpoint
 
 ```
 https://api.runpod.ai/v2/42qdgmzjc9ldy5
 ```
-
-Supports all modes: Mode 1, 2, 3a, 3b
 
 ## Authentication
 
@@ -124,6 +122,8 @@ Generate video AND audio from just an image and duration (no input audio require
 
 Generate video with multiple keyframe reference images. Supports both lip-sync (3a) and audio generation (3b).
 
+**v56 Update**: Mode 3 now uses chained `LTXVAddGuide` nodes internally for improved stability and eliminates end-of-video flickering issues.
+
 ### Request Format - Mode 3a (Multi-keyframe + Lip-sync)
 
 ```json
@@ -157,7 +157,7 @@ Generate video with multiple keyframe reference images. Supports both lip-sync (
 }
 ```
 
-### Keyframe Parameters
+### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -167,16 +167,28 @@ Generate video with multiple keyframe reference images. Supports both lip-sync (
 | `keyframes[].strength` | float | No | 1.0/0.8 | Guide strength 0.0-1.0 |
 | `audio_url` | string | Mode 3a | - | URL to audio file for lip-sync |
 | `duration` | float | Mode 3b | - | Video duration in seconds (1-30) |
+| `prompt_positive` | string | No | "A person speaks naturally..." | Positive prompt |
+| `prompt_negative` | string | No | "static, blurry..." | Negative prompt |
+| `quality_preset` | string | No | "high" | Quality: `fast`, `high`, `ultra` |
+| `width` | int | No | 1280 | Output width |
+| `height` | int | No | 736 | Output height |
+| `seed` | int | No | random | Random seed for reproducibility |
+| `lora_camera` | float | No | 0.3 | Camera LoRA (0 = disable dolly-in) |
+| `lora_distilled` | float | No | 0.6 | Distilled LoRA strength (0 = disable, needs more steps) |
+| `lora_detailer` | float | No | 1.0 | Detailer LoRA strength |
+| `img_compression` | int | No | 23 | Image compression (0-50, lower = better) |
+| `frame_alignment` | int | No | 8 | Keyframe alignment interval (set 1 to disable) |
+| `steps` | int | No | preset | Sampling steps (recommend 25+ if lora_distilled=0) |
 
 ### Frame Position
 
 | Value | Description |
 |-------|-------------|
 | `"first"` | First frame (index 0) |
-| `"last"` | Last frame (index -1) |
+| `"last"` | Last frame (explicit last index) |
 | `0.0-1.0` | Normalized position (0.0=first, 0.5=middle, 1.0=last) |
 
-**Note**: Intermediate positions are aligned to 8-frame boundaries for stability.
+**Note**: Intermediate positions are aligned to 8-frame boundaries by default. Set `frame_alignment=1` to disable.
 
 ### Keyframe Defaults
 
@@ -184,13 +196,26 @@ Generate video with multiple keyframe reference images. Supports both lip-sync (
 - Last keyframe: `frame_position: "last"`, `strength: 0.8`
 - Intermediate: Evenly distributed, `strength: 0.8`
 
+### Keyframe Transition Behavior
+
+**关键帧之间的过渡是平滑的 (Smooth Transitions)**
+
+Mode 3 生成的视频中，关键帧之间会有自然的平滑过渡效果。这是 LTX-2 模型的默认行为，通过 `LTXVAddGuide` 节点的引导实现。
+
+| 特性 | 说明 |
+|------|------|
+| 过渡类型 | 平滑过渡 (smooth transition) |
+| 硬切支持 | 暂不支持 (not supported) |
+| strength 作用 | 控制关键帧对该帧的引导强度，不控制过渡锐度 |
+
+**注意**: 如需硬切 (hard cut) 效果，建议在后期处理阶段使用视频编辑工具实现。
+
 ### Mode 3 Notes
 
-- **Verified**: Mode 3a/3b tested and verified working in v53 (2026-02-01)
+- **v56 Improvement**: Uses chained `LTXVAddGuide` nodes (fixes flickering issue from v53/v54)
 - **Guide-based**: End frames are approximate guides, not exact matches
 - **Max keyframes**: 1-9 keyframes supported
 - **Strength tuning**: Lower strength (0.6-0.8) recommended for non-first frames
-- **Uses KJNodes**: Requires ComfyUI-KJNodes for `LTXVAddGuideMulti` node
 - **Mode Detection**: API auto-detects mode based on `audio_url` presence:
   - `audio_url` 存在 → Mode 3a (lip-sync)，以音频时长为准，忽略 `duration`
   - `audio_url` 不存在 → Mode 3b (audio generation)，使用 `duration` 参数
@@ -620,7 +645,7 @@ result = generate_multiframe_video(
     audio_url="https://example.com/speech.mp3"
 )
 print(f"Video URL: {result['video_url']}")
-print(f"Mode: {result['mode']}")  # "multiframe_lipsync"
+print(f"Mode: {result['mode']}")  # "3a"
 
 # Usage - Mode 3b (audio generation with multiple keyframes)
 result = generate_multiframe_video(
@@ -631,8 +656,8 @@ result = generate_multiframe_video(
     ],
     duration=10.0
 )
-print(f"Mode: {result['mode']}")  # "multiframe_audiogen"
-print(f"Keyframes: {result['num_keyframes']}")  # 3
+print(f"Mode: {result['mode']}")  # "3b"
+print(f"Keyframes: {result['keyframes']}")  # 3
 ```
 
 ### TypeScript
@@ -650,7 +675,8 @@ interface VideoResult {
   fps: number;
   seed: number;
   quality_preset: string;
-  mode?: string;  // "audio_gen" for Mode 2
+  mode?: string;
+  keyframes?: number;  // Mode 3 only
   generation_time: number;
 }
 
@@ -729,20 +755,71 @@ async function generateVideoWithAudio(
   }
 }
 
-// Usage - Mode 1
+// Mode 3: Multi-keyframe
+interface Keyframe {
+  image_url: string;
+  frame_position?: string | number;
+  strength?: number;
+}
+
+async function generateMultiframeVideo(
+  keyframes: Keyframe[],
+  options: { audioUrl?: string; duration?: number; quality?: string } = {}
+): Promise<VideoResult> {
+  const input: any = {
+    keyframes,
+    quality_preset: options.quality || 'high',
+  };
+
+  if (options.audioUrl) {
+    input.audio_url = options.audioUrl;  // Mode 3a
+  } else {
+    input.duration = options.duration;    // Mode 3b
+  }
+
+  const submitRes = await fetch(`${ENDPOINT}/run`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ input }),
+  });
+  const { id: jobId } = await submitRes.json();
+
+  while (true) {
+    const statusRes = await fetch(`${ENDPOINT}/status/${jobId}`, {
+      headers: { 'Authorization': `Bearer ${API_KEY}` },
+    });
+    const result = await statusRes.json();
+
+    if (result.status === 'COMPLETED') return result.output.output;
+    if (result.status === 'FAILED') throw new Error(result.error);
+
+    await new Promise((r) => setTimeout(r, 10000));
+  }
+}
+
+// Usage
 const lipsyncResult = await generateLipsyncVideo(
   'https://example.com/portrait.jpg',
   'https://example.com/speech.mp3',
   { loraCamera: 0 }
 );
 
-// Usage - Mode 2
 const audioGenResult = await generateVideoWithAudio(
   'https://example.com/portrait.jpg',
   5.0,
   { prompt: 'A person speaking about technology' }
 );
-console.log(audioGenResult.mode);  // "audio_gen"
+
+const multiframeResult = await generateMultiframeVideo(
+  [
+    { image_url: 'https://example.com/start.jpg', frame_position: 'first' },
+    { image_url: 'https://example.com/end.jpg', frame_position: 'last', strength: 0.8 }
+  ],
+  { audioUrl: 'https://example.com/speech.mp3' }
+);
 ```
 
 ## Video Storage
@@ -781,8 +858,10 @@ https://storage.googleapis.com/dramaland-public/ugc_media/{job_id}/ltx2_videos/{
 |------|-----------|----------|---------|--------------|
 | 3a (lip-sync) | 3 | 15.4s (audio) | fast | ~255s |
 | 3b (audio gen) | 3 | 10.0s | fast | ~321s |
+| 3a (lip-sync) | 4 | 8s (audio) | fast | ~180s |
+| 3b (audio gen) | 4 | 8s | fast | ~200s |
 
-*Times based on RTX 4090/5090, tested with v53*
+*Times based on RTX 4090/5090*
 
 ## Error Codes
 
@@ -795,7 +874,6 @@ https://storage.googleapis.com/dramaland-public/ugc_media/{job_id}/ltx2_videos/{
 | `Duration cannot exceed 30 seconds` | duration > 30 | Use duration <= 30.0 |
 | `At least 1 keyframe is required` | Empty keyframes array | Provide at least 1 keyframe |
 | `Maximum 9 keyframes supported` | Too many keyframes | Use 1-9 keyframes |
-| `Multiframe template not loaded` | KJNodes not installed | Update to Docker v53+ |
 | `ComfyUI failed to start` | GPU initialization error | Retry request |
 | `Generation timeout` | Processing exceeded 10 min | Use shorter duration or retry |
 | `GCS upload failed` | Storage error | Video returned as base64 fallback |
@@ -809,3 +887,19 @@ https://storage.googleapis.com/dramaland-public/ugc_media/{job_id}/ltx2_videos/{
 | Max keyframes | 1 | 1 | 9 |
 | Max file size | 50 MB/input | 50 MB | 50 MB/keyframe |
 | Concurrent jobs | Worker pool | Worker pool | Worker pool |
+
+## Changelog
+
+### v56 (2026-02-03)
+- **Mode 3 改进**: 使用链式 `LTXVAddGuide` 节点替代 `LTXVAddGuideMulti`，修复视频末尾闪烁问题
+- **移除 Mode 4**: Mode 4 的链式实现已合并到 Mode 3，无需单独的 `use_chained_guides` 参数
+- **平滑过渡**: 关键帧之间保持平滑过渡效果（不支持硬切）
+- **实际部署版本**: v55 代码首次部署
+
+### v54 (2026-02-01)
+- 添加 `trim_to_audio` 和 `frame_alignment` 参数
+- 添加 `steps` 参数用于自定义采样步数
+
+### v53 (2026-01-31)
+- 添加 Mode 3a/3b 多关键帧支持
+- 使用 KJNodes 的 `LTXVAddGuideMulti` 节点
