@@ -6,7 +6,7 @@ Uses workflow_ltx2_enhanced.json as base template.
 Based on test_720p.py production configuration:
 - Resolution: 1280x736
 - img_compression: 23
-- fps: 30
+- fps: 30 (default, configurable 1-60)
 - steps: 8
 - cfg: 1.0
 
@@ -151,7 +151,7 @@ class WorkflowBuilder:
 
         return replace_value(workflow)
 
-    def get_video_params(self, audio_duration: float, fps: int = 30, buffer_seconds: float = 1.0) -> dict:
+    def get_video_params(self, audio_duration: float, fps: int = 24, buffer_seconds: float = 1.0) -> dict:
         """
         Calculate video parameters from audio duration.
         Ensures video duration >= audio duration + buffer.
@@ -211,7 +211,7 @@ class WorkflowBuilder:
             seed: Random seed for generation
             width: Video width (must be divisible by 32)
             height: Video height (must be divisible by 32)
-            fps: Video frames per second (default 30)
+            fps: Video frames per second (default 24)
             steps: Sampling steps (default 8)
             cfg_scale: CFG scale (default 1.0)
             lora_distilled: Distilled LoRA strength (default 0.6)
@@ -230,7 +230,7 @@ class WorkflowBuilder:
         if self.audio_gen_template is None:
             raise RuntimeError("Audio generation template not loaded")
 
-        # Calculate video frames (30 fps) with buffer
+        # Calculate video frames with buffer
         total_duration = duration + buffer_seconds
         num_frames = math.ceil(total_duration * fps) + 1
         if num_frames < 30:
@@ -266,7 +266,7 @@ class WorkflowBuilder:
 
         return workflow
 
-    def get_audio_gen_params(self, duration: float, fps: int = 30, buffer_seconds: float = 1.0) -> dict:
+    def get_audio_gen_params(self, duration: float, fps: int = 24, buffer_seconds: float = 1.0) -> dict:
         """
         Calculate video and audio parameters for audio generation mode.
 

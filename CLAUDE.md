@@ -12,7 +12,7 @@ LTX-2 Video Generation RunPod Serverless API with four modes:
 
 Uses LTX-2 19B model with LoRA optimizations.
 
-**Current Version**: v59 (dual buffer guide strategies: add_node / extend_last)
+**Current Version**: v60 (configurable fps parameter)
 
 ## Architecture
 
@@ -62,8 +62,8 @@ LTX/
 ```bash
 # Build & Push
 cd docker
-docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v59 .
-docker push nooka210/ltx2-comfyui-worker:v59
+docker build --platform linux/amd64 -t nooka210/ltx2-comfyui-worker:v60 .
+docker push nooka210/ltx2-comfyui-worker:v60
 
 # Test Mode 1: Lip-sync
 curl -X POST "https://api.runpod.ai/v2/42qdgmzjc9ldy5/run" \
@@ -125,8 +125,8 @@ See `docker/API.md` for full documentation.
 
 | 模态 | 帧率 | 计算公式 |
 |------|------|---------|
-| 视频 | 30 fps | `ceil(duration * 30) + 1` |
-| 音频 | 25 Hz | `ceil(duration * 25)` |
+| 视频 | 30 fps (默认，可通过 `fps` 参数配置 1-60) | `ceil(duration * fps) + 1` |
+| 音频 | 25 Hz (固定，LTX-2 模型要求) | `ceil(duration * 25)` |
 
 ## API 模式
 

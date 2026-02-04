@@ -6,7 +6,7 @@ RunPod Serverless API for generating video with four modes:
 - **Mode 3a (Multi-keyframe Lip-sync)**: Multiple keyframe images + Audio → Video with smooth keyframe transitions
 - **Mode 3b (Multi-keyframe Audio Gen)**: Multiple keyframe images + Duration → Video + Generated audio with smooth keyframe transitions
 
-**Version**: v59
+**Version**: v60
 
 ## Endpoint
 
@@ -72,6 +72,7 @@ Generate video with lip synchronization to provided audio.
 | `img_compression` | int | No | 23 | Image compression (0-50, lower = better) |
 | `img_strength` | float | No | 1.0 | First frame injection strength (0-1) |
 | `buffer_seconds` | float | No | 1.0 | Extra video buffer beyond audio duration |
+| `fps` | int | No | 30 | Video frame rate (1-60) |
 
 ---
 
@@ -110,11 +111,12 @@ Generate video AND audio from just an image and duration (no input audio require
 | `img_compression` | int | No | 23 | Image compression (0-50, lower = better) |
 | `img_strength` | float | No | 1.0 | First frame injection strength (0-1) |
 | `buffer_seconds` | float | No | 1.0 | Extra video buffer beyond target duration |
+| `fps` | int | No | 30 | Video frame rate (1-60) |
 
 ### Audio Generation Notes
 
 - Audio is generated at 25 Hz frame rate (LTX-2 native audio rate)
-- Video is generated at 30 fps
+- Video is generated at 30 fps by default (configurable via `fps` parameter)
 - Both are combined into a single MP4 file
 - Generated audio matches the visual content based on the prompt
 
@@ -184,6 +186,7 @@ Generate video with multiple keyframe reference images. Supports both lip-sync (
 | `buffer_seconds` | float | No | 1.0 | Extra video buffer beyond input duration |
 | `trim_to_audio` | bool | No | false | Trim output video to match audio length |
 | `auto_buffer_guide` | bool/string | No | true | Buffer guide strategy (v59): `true`/`"add_node"`, `"extend_last"`, or `false`/`"none"` |
+| `fps` | int | No | 30 | Video frame rate (1-60) |
 
 ### Frame Position
 
@@ -926,6 +929,11 @@ https://storage.googleapis.com/dramaland-public/ugc_media/{job_id}/ltx2_videos/{
 | Concurrent jobs | Worker pool | Worker pool | Worker pool |
 
 ## Changelog
+
+### v60 (2026-02-04)
+- **帧率参数化**: 新增 `fps` 参数（默认 30fps，范围 1-60）
+  - 所有模式均支持自定义帧率
+  - 可设置 `"fps": 24` 获得电影标准帧率，减少约 20% 帧数和文件大小
 
 ### v59 (2026-02-03)
 - **双策略支持**: `auto_buffer_guide` 参数现在支持多种值

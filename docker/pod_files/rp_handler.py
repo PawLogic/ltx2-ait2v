@@ -284,6 +284,12 @@ def handler(event):
         # Buffer seconds: extra video duration beyond audio (default 1.0s)
         buffer_seconds = input_data.get("buffer_seconds", 1.0)
 
+        # Video frame rate (default 30fps, range 1-60)
+        fps = input_data.get("fps", 30)
+        if not isinstance(fps, (int, float)) or fps < 1 or fps > 60:
+            fps = 30
+        fps = int(fps)
+
         # Build workflow using template
         print("Step 3/4: Building workflow...")
         workflow = workflow_builder.build_workflow(
@@ -295,7 +301,7 @@ def handler(event):
             seed=seed,
             width=width,
             height=height,
-            fps=30,
+            fps=fps,
             steps=preset["steps"],
             cfg_scale=1.0,
             lora_distilled=lora_distilled,
@@ -307,10 +313,10 @@ def handler(event):
         )
 
         # Get video parameters for response
-        video_params = workflow_builder.get_video_params(audio_duration, fps=30, buffer_seconds=buffer_seconds)
+        video_params = workflow_builder.get_video_params(audio_duration, fps=fps, buffer_seconds=buffer_seconds)
 
         print(f"  Resolution: {width}x{height}")
-        print(f"  Frames: {video_params['num_frames']} @ 30fps = {video_params['actual_duration']:.1f}s")
+        print(f"  Frames: {video_params['num_frames']} @ {fps}fps = {video_params['actual_duration']:.1f}s")
         print(f"  Quality: {quality_preset} ({preset['description']})")
         print(f"  Seed: {seed}")
 
@@ -388,7 +394,7 @@ def handler(event):
                     "resolution": f"{width}x{height}",
                     "duration": f"{audio_duration:.1f}s",
                     "frames": video_params["num_frames"],
-                    "fps": 30,
+                    "fps": fps,
                     "seed": seed,
                     "quality_preset": quality_preset,
                     "generation_time": round(generation_time, 1),
@@ -410,7 +416,7 @@ def handler(event):
                 "resolution": f"{width}x{height}",
                 "duration": f"{audio_duration:.1f}s",
                 "frames": video_params["num_frames"],
-                "fps": 30,
+                "fps": fps,
                 "seed": seed,
                 "quality_preset": quality_preset,
                 "generation_time": round(generation_time, 1)
@@ -551,6 +557,12 @@ def audio_gen_handler(event):
         # Buffer seconds: extra video duration beyond target (default 1.0s)
         buffer_seconds = input_data.get("buffer_seconds", 1.0)
 
+        # Video frame rate (default 30fps, range 1-60)
+        fps = input_data.get("fps", 30)
+        if not isinstance(fps, (int, float)) or fps < 1 or fps > 60:
+            fps = 30
+        fps = int(fps)
+
         # Build workflow using audio generation template
         print("Step 3/4: Building audio generation workflow...")
         workflow = workflow_builder.build_audio_gen_workflow(
@@ -561,7 +573,7 @@ def audio_gen_handler(event):
             seed=seed,
             width=width,
             height=height,
-            fps=30,
+            fps=fps,
             steps=preset["steps"],
             cfg_scale=1.0,
             lora_distilled=lora_distilled,
@@ -573,11 +585,11 @@ def audio_gen_handler(event):
         )
 
         # Get video/audio parameters for response
-        gen_params = workflow_builder.get_audio_gen_params(duration, fps=30, buffer_seconds=buffer_seconds)
+        gen_params = workflow_builder.get_audio_gen_params(duration, fps=fps, buffer_seconds=buffer_seconds)
 
         print(f"  Resolution: {width}x{height}")
         print(f"  Duration: {duration}s")
-        print(f"  Video frames: {gen_params['num_frames']} @ 30fps")
+        print(f"  Video frames: {gen_params['num_frames']} @ {fps}fps")
         print(f"  Audio frames: {gen_params['audio_frames']} @ 25Hz")
         print(f"  Quality: {quality_preset} ({preset['description']})")
         print(f"  Seed: {seed}")
@@ -657,7 +669,7 @@ def audio_gen_handler(event):
                     "duration": f"{duration:.1f}s",
                     "frames": gen_params["num_frames"],
                     "audio_frames": gen_params["audio_frames"],
-                    "fps": 30,
+                    "fps": fps,
                     "seed": seed,
                     "quality_preset": quality_preset,
                     "mode": "audio_gen",
@@ -681,7 +693,7 @@ def audio_gen_handler(event):
                 "duration": f"{duration:.1f}s",
                 "frames": gen_params["num_frames"],
                 "audio_frames": gen_params["audio_frames"],
-                "fps": 30,
+                "fps": fps,
                 "seed": seed,
                 "quality_preset": quality_preset,
                 "mode": "audio_gen",
@@ -884,6 +896,12 @@ def multi_keyframe_handler(event):
         # v59: Buffer guide strategy - True/"add_node", "extend_last", or False/"none"
         auto_buffer_guide = input_data.get("auto_buffer_guide", True)
 
+        # Video frame rate (default 30fps, range 1-60)
+        fps = input_data.get("fps", 30)
+        if not isinstance(fps, (int, float)) or fps < 1 or fps > 60:
+            fps = 30
+        fps = int(fps)
+
         # Allow direct steps override
         steps = input_data.get("steps", preset["steps"])
 
@@ -904,7 +922,7 @@ def multi_keyframe_handler(event):
             seed=seed,
             width=width,
             height=height,
-            fps=30,
+            fps=fps,
             steps=steps,
             cfg_scale=1.0,
             lora_distilled=lora_distilled,
@@ -922,7 +940,7 @@ def multi_keyframe_handler(event):
             keyframes=keyframe_data,
             audio_duration=audio_duration,
             duration=duration if is_mode_3b else None,
-            fps=30,
+            fps=fps,
             frame_alignment=frame_alignment,
             buffer_seconds=buffer_seconds,
             auto_buffer_guide=auto_buffer_guide
@@ -1015,7 +1033,7 @@ def multi_keyframe_handler(event):
                     "duration": f"{gen_params['target_duration']:.1f}s",
                     "frames": gen_params["num_frames"],
                     "keyframes": len(keyframe_data),
-                    "fps": 30,
+                    "fps": fps,
                     "seed": seed,
                     "quality_preset": quality_preset,
                     "mode": "3a" if is_mode_3a else "3b",
@@ -1039,7 +1057,7 @@ def multi_keyframe_handler(event):
                 "duration": f"{gen_params['target_duration']:.1f}s",
                 "frames": gen_params["num_frames"],
                 "keyframes": len(keyframe_data),
-                "fps": 30,
+                "fps": fps,
                 "seed": seed,
                 "quality_preset": quality_preset,
                 "mode": "3a" if is_mode_3a else "3b",
@@ -1165,7 +1183,7 @@ def unified_handler(event):
 
 
 if __name__ == "__main__":
-    print("Starting Enhanced LTX-2 RunPod Handler (v59)")
+    print("Starting Enhanced LTX-2 RunPod Handler (v60)")
     print("Supported input modes:")
     print("  - Mode 1 (Lip-sync): image_url + audio_url")
     print("  - Mode 2 (Audio Gen): image_url + duration")
